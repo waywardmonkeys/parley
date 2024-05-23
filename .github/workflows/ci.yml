@@ -115,7 +115,7 @@ jobs:
         run: cargo hack clippy ${{ env.PRIMARY_PKGS }} --locked --optional-deps --each-feature --features std --tests --benches --examples -- -D warnings
 
       - name: cargo clippy (examples)
-        run: cargo hack clippy ${{ env.EXAMPLE_PKGS }} --locked --optional-deps --each-feature -- -D warnings
+        run: cargo hack clippy ${{ env.EXAMPLE_PKGS }} --locked --optional-deps --each-feature --features std -- -D warnings
 
   clippy-stable-android:
     name: cargo clippy (android)
