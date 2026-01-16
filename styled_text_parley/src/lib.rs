@@ -54,10 +54,8 @@ extern crate alloc;
 use core::fmt::Debug;
 
 use parley::style::Brush;
-use parley::{
-    FontContext, FontFeatures, FontVariations, Layout, LayoutContext, RangedBuilder, StyleProperty,
-};
-use styled_text::{ComputedInlineStyle, StyledText};
+use parley::{FontContext, Layout, LayoutContext, TextStyle};
+use styled_text::StyledText;
 
 mod convert;
 
@@ -68,9 +66,9 @@ use crate::convert::to_parley_line_height;
 
 /// Builds a Parley [`Layout`] from a [`StyledText`].
 ///
-/// This uses Parley’s ranged builder and applies computed inline runs as explicit `StyleProperty`
-/// spans. The returned `Layout` has been shaped, but line breaking and alignment are left to the
-/// caller.
+/// This uses Parley’s [`StyleRunBuilder`](parley::StyleRunBuilder) and passes fully specified
+/// styles for each computed inline run. The returned `Layout` has been shaped, but line breaking
+/// and alignment are left to the caller.
 pub fn build_layout_from_styled_text<T, A, B>(
     layout_cx: &mut LayoutContext<B>,
     font_cx: &mut FontContext,
@@ -85,111 +83,37 @@ where
     B: Brush + Clone,
 {
     let text = styled.as_str();
-    let mut builder = layout_cx.ranged_builder(font_cx, text, scale, quantize);
-
-    let default_inline = styled.base_inline_style();
-    push_inline_defaults(&mut builder, default_inline, default_brush.clone());
-
-    // Paragraph-level properties currently supported by Parley.
     let paragraph = styled.computed_paragraph_style();
-    builder.push_default(StyleProperty::WordBreak(paragraph.word_break()));
-    builder.push_default(StyleProperty::OverflowWrap(paragraph.overflow_wrap()));
-    builder.push_default(StyleProperty::TextWrapMode(paragraph.text_wrap_mode()));
+    let mut builder = layout_cx.style_run_builder(font_cx, text, scale, quantize);
 
     for run in styled.resolved_inline_runs_coalesced() {
-        push_run_diffs(&mut builder, default_inline, &run.style, run.range);
+        let style: TextStyle<'static, '_, B> = TextStyle {
+            font_family: run.style.font_family().clone(),
+            font_size: run.style.font_size_px(),
+            font_width: run.style.font_width(),
+            font_style: run.style.font_style(),
+            font_weight: run.style.font_weight(),
+            font_variations: parley::FontVariations::from(run.style.font_variations()),
+            font_features: parley::FontFeatures::from(run.style.font_features()),
+            locale: run.style.locale().copied(),
+            brush: default_brush.clone(),
+            has_underline: run.style.underline(),
+            underline_offset: None,
+            underline_size: None,
+            underline_brush: None,
+            has_strikethrough: run.style.strikethrough(),
+            strikethrough_offset: None,
+            strikethrough_size: None,
+            strikethrough_brush: None,
+            line_height: to_parley_line_height(run.style.line_height()),
+            word_spacing: run.style.word_spacing_px(),
+            letter_spacing: run.style.letter_spacing_px(),
+            word_break: paragraph.word_break(),
+            overflow_wrap: paragraph.overflow_wrap(),
+            text_wrap_mode: paragraph.text_wrap_mode(),
+        };
+        builder.push_style_run(style, run.range);
     }
 
     builder.build(text)
-}
-
-fn push_inline_defaults<B: Brush + Clone>(
-    builder: &mut RangedBuilder<'_, B>,
-    style: &ComputedInlineStyle,
-    brush: B,
-) {
-    builder.push_default(StyleProperty::Brush(brush));
-    builder.push_default(StyleProperty::FontFamily(style.font_family().clone()));
-    builder.push_default(StyleProperty::FontSize(style.font_size_px()));
-    builder.push_default(StyleProperty::FontWidth(style.font_width()));
-    builder.push_default(StyleProperty::FontStyle(style.font_style()));
-    builder.push_default(StyleProperty::FontWeight(style.font_weight()));
-    builder.push_default(FontVariations::from(style.font_variations()));
-    builder.push_default(FontFeatures::from(style.font_features()));
-    builder.push_default(StyleProperty::Locale(style.locale().copied()));
-    builder.push_default(StyleProperty::Underline(style.underline()));
-    builder.push_default(StyleProperty::Strikethrough(style.strikethrough()));
-    builder.push_default(StyleProperty::LineHeight(to_parley_line_height(
-        style.line_height(),
-    )));
-    builder.push_default(StyleProperty::WordSpacing(style.word_spacing_px()));
-    builder.push_default(StyleProperty::LetterSpacing(style.letter_spacing_px()));
-}
-
-fn push_run_diffs<B: Brush + Clone>(
-    builder: &mut RangedBuilder<'_, B>,
-    default: &ComputedInlineStyle,
-    run: &ComputedInlineStyle,
-    range: core::ops::Range<usize>,
-) {
-    macro_rules! push_if {
-        ($cond:expr, $prop:expr) => {
-            if $cond {
-                builder.push($prop, range.clone());
-            }
-        };
-    }
-
-    push_if!(
-        run.font_family() != default.font_family(),
-        StyleProperty::FontFamily(run.font_family().clone())
-    );
-    push_if!(
-        run.font_size_px() != default.font_size_px(),
-        StyleProperty::FontSize(run.font_size_px())
-    );
-    push_if!(
-        run.font_width() != default.font_width(),
-        StyleProperty::FontWidth(run.font_width())
-    );
-    push_if!(
-        run.font_style() != default.font_style(),
-        StyleProperty::FontStyle(run.font_style())
-    );
-    push_if!(
-        run.font_weight() != default.font_weight(),
-        StyleProperty::FontWeight(run.font_weight())
-    );
-    push_if!(
-        run.font_variations() != default.font_variations(),
-        FontVariations::from(run.font_variations())
-    );
-    push_if!(
-        run.font_features() != default.font_features(),
-        FontFeatures::from(run.font_features())
-    );
-    push_if!(
-        run.locale() != default.locale(),
-        StyleProperty::Locale(run.locale().copied())
-    );
-    push_if!(
-        run.underline() != default.underline(),
-        StyleProperty::Underline(run.underline())
-    );
-    push_if!(
-        run.strikethrough() != default.strikethrough(),
-        StyleProperty::Strikethrough(run.strikethrough())
-    );
-    push_if!(
-        run.line_height() != default.line_height(),
-        StyleProperty::LineHeight(to_parley_line_height(run.line_height()))
-    );
-    push_if!(
-        run.word_spacing_px() != default.word_spacing_px(),
-        StyleProperty::WordSpacing(run.word_spacing_px())
-    );
-
-    if run.letter_spacing_px() != default.letter_spacing_px() {
-        builder.push(StyleProperty::LetterSpacing(run.letter_spacing_px()), range);
-    }
 }
