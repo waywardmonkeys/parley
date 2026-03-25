@@ -122,6 +122,7 @@ mod util;
 
 pub mod editing;
 pub mod layout;
+mod pipeline;
 pub mod setting;
 pub mod style;
 
