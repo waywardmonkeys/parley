@@ -98,7 +98,7 @@ fn align_impl<B: Brush, const UNDO_JUSTIFICATION: bool>(
     options: AlignmentOptions,
 ) {
     // Whether the text base direction is right-to-left.
-    let is_rtl = layout.base_level & 1 == 1;
+    let is_rtl = layout.paragraph.base_level & 1 == 1;
 
     // Apply alignment to line items
     for line in &mut layout.lines {
@@ -169,7 +169,8 @@ fn align_impl<B: Brush, const UNDO_JUSTIFICATION: bool>(
                 line_items
                     .filter(|item| item.is_text_run())
                     .for_each(|line_item| {
-                        let clusters = &mut layout.clusters[line_item.cluster_range.clone()];
+                        let clusters =
+                            &mut layout.paragraph.clusters[line_item.cluster_range.clone()];
                         let line_item_is_rtl = line_item.bidi_level & 1 != 0;
                         let clusters: &mut dyn Iterator<Item = &mut ClusterData> =
                             if line_item_is_rtl {

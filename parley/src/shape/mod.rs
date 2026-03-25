@@ -16,7 +16,7 @@ use crate::analysis::cluster::{Char, CharCluster, Status, Whitespace};
 use crate::analysis::{AnalysisDataSources, CharInfo};
 use crate::convert::script_to_harfrust;
 use crate::inline_box::InlineBox;
-use crate::layout::data::{ClusterData, LayoutDataSink};
+use crate::layout::data::{ClusterData, ShapedParagraphSink};
 use crate::lru_cache::LruCache;
 use crate::pipeline::{ShapeCluster, ShapeClusterGlyphs, ShapeRun, ShapeSink};
 use crate::util::nearly_eq;
@@ -76,7 +76,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     layout: &mut Layout<B>,
     analysis_data_sources: &AnalysisDataSources,
 ) {
-    let mut sink = LayoutDataSink::new(&mut layout.data);
+    let mut sink = ShapedParagraphSink::new(&mut layout.data.paragraph);
     shape_text_to_sink(
         rcx,
         fq,

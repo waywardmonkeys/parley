@@ -444,12 +444,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
         // HACK: ignore max_advance for empty layouts
         // Prevents crash when width is too small (https://github.com/linebender/parley/issues/186)
-        let max_advance =
-            if self.layout.data.text_len == 0 && self.layout.data.inline_boxes.is_empty() {
-                f32::MAX
-            } else {
-                self.state.line_max_advance
-            };
+        let max_advance = if self.layout.data.paragraph.text_len == 0
+            && self.layout.data.paragraph.inline_boxes.is_empty()
+        {
+            f32::MAX
+        } else {
+            self.state.line_max_advance
+        };
 
         let line_indent = self.resolve_indent();
 
@@ -477,9 +478,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         // dbg!(&self.state.line.items);
 
         // Iterate over remaining runs in the Layout
-        let item_count = self.layout.data.items.len();
+        let item_count = self.layout.data.paragraph.items.len();
         while self.state.item_idx < item_count {
-            let item = &self.layout.data.items[self.state.item_idx];
+            let item = &self.layout.data.paragraph.items[self.state.item_idx];
 
             // println!(
             //     "\nitem = {} {:?}. x: {}",
@@ -489,7 +490,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
             match item.kind {
                 LayoutItemKind::InlineBox => {
-                    let inline_box = &self.layout.data.inline_boxes[item.index];
+                    let inline_box = &self.layout.data.paragraph.inline_boxes[item.index];
 
                     let (width_contribution, height_contribution) = match inline_box.kind {
                         InlineBoxKind::InFlow => (inline_box.width, inline_box.height),
@@ -549,7 +550,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 }
                 LayoutItemKind::TextRun => {
                     let run_idx = item.index;
-                    let run_data = &self.layout.data.runs[run_idx];
+                    let run_data = &self.layout.data.paragraph.runs[run_idx];
 
                     let run = Run::new(self.layout, 0, 0, run_data, None);
                     let cluster_start = run_data.cluster_range.start;
@@ -569,7 +570,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         let boundary = cluster.info().boundary();
                         let line_height = run.metrics().line_height;
                         let max_height_exceeded = self.state.line.max_height_exceeded;
-                        let style = &self.layout.data.styles[cluster.data.style_index as usize];
+                        let style =
+                            &self.layout.data.paragraph.styles[cluster.data.style_index as usize];
 
                         // Lag text_wrap_mode style by one cluster
                         let text_wrap_mode = self.state.line.text_wrap_mode;
@@ -760,13 +762,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             };
         }
 
-        let item_count = self.layout.data.items.len();
+        let item_count = self.layout.data.paragraph.items.len();
         while self.state.item_idx < item_count {
-            let item = &self.layout.data.items[self.state.item_idx];
+            let item = &self.layout.data.paragraph.items[self.state.item_idx];
 
             match item.kind {
                 LayoutItemKind::InlineBox => {
-                    let inline_box = &self.layout.data.inline_boxes[item.index];
+                    let inline_box = &self.layout.data.paragraph.inline_boxes[item.index];
 
                     if inline_box.kind != InlineBoxKind::InFlow {
                         self.state.item_idx += 1;
@@ -793,7 +795,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     // Check if we've reached the limit after adding this box
                     if char_count >= max_chars {
                         // Check if we've consumed all content (this is the last line).
-                        let is_last_item = self.state.item_idx >= self.layout.data.items.len();
+                        let is_last_item =
+                            self.state.item_idx >= self.layout.data.paragraph.items.len();
                         let break_reason = if is_last_item {
                             BreakReason::None
                         } else {
@@ -811,7 +814,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 }
                 LayoutItemKind::TextRun => {
                     let run_idx = item.index;
-                    let run_data = &self.layout.data.runs[run_idx];
+                    let run_data = &self.layout.data.paragraph.runs[run_idx];
                     let run = Run::new(self.layout, 0, 0, run_data, None);
                     let cluster_start = run_data.cluster_range.start;
                     let cluster_end = run_data.cluster_range.end;
@@ -857,7 +860,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // - BreakReason::Regular for soft wraps
                             let is_last_cluster_of_run = self.state.cluster_idx >= cluster_end;
                             let is_last_item =
-                                self.state.item_idx + 1 >= self.layout.data.items.len();
+                                self.state.item_idx + 1 >= self.layout.data.paragraph.items.len();
                             let break_reason = if is_last_cluster_of_run && is_last_item {
                                 BreakReason::None
                             } else if is_newline {
@@ -917,7 +920,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
     /// Consumes the line breaker and finalizes all line computations.
     pub fn finish(mut self) {
-        if self.layout.data.text_len == 0 {
+        if self.layout.data.paragraph.text_len == 0 {
             if let Some(line) = self.lines.line_items.first_mut() {
                 line.text_range = 0..0;
                 line.cluster_range = 0..0;
@@ -962,7 +965,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         line.metrics.line_height = line_height;
 
         if line.item_range.is_empty() {
-            line.text_range = self.layout.data.text_len..self.layout.data.text_len;
+            line.text_range =
+                self.layout.data.paragraph.text_len..self.layout.data.paragraph.text_len;
         }
         // Compute metrics for the line, but ignore trailing whitespace.
         let mut have_metrics = false;
@@ -973,7 +977,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         {
             match line_item.kind {
                 LayoutItemKind::InlineBox => {
-                    let item = &self.layout.data.inline_boxes[line_item.index];
+                    let item = &self.layout.data.paragraph.inline_boxes[line_item.index];
 
                     // Advance is already computed in "commit line" for items
                     if item.kind == InlineBoxKind::InFlow {
@@ -1000,10 +1004,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     }
 
                     // Compute the run's advance by summing the advances of its constituent clusters
-                    line_item.advance = self.layout.data.clusters[line_item.cluster_range.clone()]
-                        .iter()
-                        .map(|c| c.advance)
-                        .sum();
+                    line_item.advance = self.layout.data.paragraph.clusters
+                        [line_item.cluster_range.clone()]
+                    .iter()
+                    .map(|c| c.advance)
+                    .sum();
 
                     // Ignore trailing whitespace for metrics computation
                     // (we are iterating backwards so trailing whitespace comes first)
@@ -1012,7 +1017,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     }
 
                     // Compute the run's vertical metrics
-                    let run = &self.layout.data.runs[line_item.index];
+                    let run = &self.layout.data.paragraph.runs[line_item.index];
                     line.metrics.ascent = line.metrics.ascent.max(run.metrics.ascent);
                     line.metrics.descent = line.metrics.descent.max(run.metrics.descent);
 
@@ -1046,7 +1051,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         .sum()
                 }
 
-                let clusters = &self.layout.data.clusters[run.cluster_range.clone()];
+                let clusters = &self.layout.data.paragraph.clusters[run.cluster_range.clone()];
                 if run.is_rtl() {
                     whitespace_advance(clusters.iter())
                 } else {
@@ -1060,7 +1065,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             if !line.item_range.is_empty() {
                 let line_item = &self.lines.line_items[line.item_range.start];
                 if line_item.is_text_run() {
-                    let run = &self.layout.data.runs[line_item.index];
+                    let run = &self.layout.data.paragraph.runs[line_item.index];
                     line.metrics.ascent = run.metrics.ascent;
                     line.metrics.descent = run.metrics.descent;
                 }
@@ -1076,6 +1081,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 if let Some((index, run)) = self
                     .layout
                     .data
+                    .paragraph
                     .runs
                     .iter()
                     .enumerate()
@@ -1103,7 +1109,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             line.metrics.line_height - (line.metrics.ascent + line.metrics.descent);
 
         // Whether metrics should be quantized to pixel boundaries
-        let quantize = self.layout.data.quantize;
+        let quantize = self.layout.data.paragraph.quantize;
 
         let (ascent, descent) = if quantize {
             // We mimic Chrome in rounding ascent and descent separately,
@@ -1257,13 +1263,13 @@ fn try_commit_line<B: Brush>(
     line_indent: f32,
 ) -> bool {
     // Ensure that the cluster and item endpoints are within range
-    state.clusters.end = state.clusters.end.min(layout.data.clusters.len());
-    state.items.end = state.items.end.min(layout.data.items.len());
+    state.clusters.end = state.clusters.end.min(layout.data.paragraph.clusters.len());
+    state.items.end = state.items.end.min(layout.data.paragraph.items.len());
 
     let start_item_idx = lines.line_items.len();
     // let start_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
 
-    let items_to_commit = &layout.data.items[state.items.clone()];
+    let items_to_commit = &layout.data.paragraph.items[state.items.clone()];
 
     // Compute first and last run index
     let is_text_run = |item: &LayoutItem| item.kind == LayoutItemKind::TextRun;
@@ -1288,7 +1294,7 @@ fn try_commit_line<B: Brush>(
 
         match item.kind {
             LayoutItemKind::InlineBox => {
-                let inline_box = &layout.data.inline_boxes[item.index];
+                let inline_box = &layout.data.paragraph.inline_boxes[item.index];
 
                 lines.line_items.push(LineItemData {
                     kind: LayoutItemKind::InlineBox,
@@ -1306,7 +1312,7 @@ fn try_commit_line<B: Brush>(
                 last_item_kind = item.kind;
             }
             LayoutItemKind::TextRun => {
-                let run_data = &layout.data.runs[item.index];
+                let run_data = &layout.data.paragraph.runs[item.index];
 
                 // Compute cluster range
                 // The first and last ranges have overrides to account for line-breaks within runs
@@ -1372,7 +1378,7 @@ fn try_commit_line<B: Brush>(
     let mut num_spaces = state.num_spaces;
     if break_reason == BreakReason::Regular
         && state.clusters.start < state.clusters.end
-        && layout.data.clusters[state.clusters.end - 1]
+        && layout.data.paragraph.clusters[state.clusters.end - 1]
             .info
             .whitespace()
             .is_space_or_nbsp()

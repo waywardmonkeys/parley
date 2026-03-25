@@ -32,12 +32,12 @@ impl<B: Brush> fmt::Debug for Layout<B> {
             f.debug_struct("Layout").field("data", &self.data).finish()
         } else {
             f.debug_struct("Layout")
-                .field("text_len", &self.data.text_len)
+                .field("text_len", &self.data.paragraph.text_len)
                 .field("width", &self.data.width)
                 .field("height", &self.data.height)
                 .field("lines", &self.data.lines.len())
-                .field("runs", &self.data.runs.len())
-                .field("styles", &self.data.styles.len())
+                .field("runs", &self.data.paragraph.runs.len())
+                .field("styles", &self.data.paragraph.styles.len())
                 .finish_non_exhaustive()
         }
     }
@@ -51,12 +51,12 @@ impl<B: Brush> Layout<B> {
 
     /// Returns the scale factor provided when creating the layout.
     pub fn scale(&self) -> f32 {
-        self.data.scale
+        self.data.paragraph.scale
     }
 
     /// Returns the style collection for the layout.
     pub fn styles(&self) -> &[Style<B>] {
-        &self.data.styles
+        &self.data.paragraph.styles
     }
 
     /// The `max_advance` that was used to line break the `Layout`
@@ -112,15 +112,15 @@ impl<B: Brush> Layout<B> {
 
     /// Returns `true` if the dominant direction of the layout is right-to-left.
     pub fn is_rtl(&self) -> bool {
-        self.data.base_level & 1 != 0
+        self.data.paragraph.base_level & 1 != 0
     }
 
     pub fn inline_boxes(&self) -> &[InlineBox] {
-        &self.data.inline_boxes
+        &self.data.paragraph.inline_boxes
     }
 
     pub fn inline_boxes_mut(&mut self) -> &mut [InlineBox] {
-        &mut self.data.inline_boxes
+        &mut self.data.paragraph.inline_boxes
     }
 
     /// Returns an iterator over the lines in the layout.

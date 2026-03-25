@@ -176,14 +176,14 @@ fn assert_builders_produce_same_result<'b>(
     // Source of truth - ranged builder from a clean layout context
     let layout_truth = build_layout_with_ranged(&mut fcx, &mut lcx_a, &ropts, &with_ranged_builder);
     assert!(
-        layout_truth.data.runs.is_empty() == expect_empty,
+        layout_truth.data.paragraph.runs.is_empty() == expect_empty,
         "expected runs to exist for lcx_a_rb_one"
     );
 
     // Testing idempotence of ranged builder creation
     let layout = build_layout_with_ranged(&mut fcx, &mut lcx_a, &ropts, &with_ranged_builder);
     assert!(
-        layout.data.runs.is_empty() == expect_empty,
+        layout.data.paragraph.runs.is_empty() == expect_empty,
         "expected runs to exist for lcx_a_rb_two"
     );
     assert_eq_layout_data(&layout_truth.data, &layout.data, "lcx_a_rb_two");
@@ -191,7 +191,7 @@ fn assert_builders_produce_same_result<'b>(
     // Basic builder compatibility - tree builder from a clean layout context
     let layout = build_layout_with_tree(&mut fcx, &mut lcx_b, &topts, &with_tree_builder);
     assert!(
-        layout.data.runs.is_empty() == expect_empty,
+        layout.data.paragraph.runs.is_empty() == expect_empty,
         "expected runs to exist for lcx_b_tb_one"
     );
     assert_eq_layout_data(&layout_truth.data, &layout.data, "lcx_b_tb_one");
@@ -199,7 +199,7 @@ fn assert_builders_produce_same_result<'b>(
     // Testing idempotence of tree builder creation
     let layout = build_layout_with_tree(&mut fcx, &mut lcx_b, &topts, &with_tree_builder);
     assert!(
-        layout.data.runs.is_empty() == expect_empty,
+        layout.data.paragraph.runs.is_empty() == expect_empty,
         "expected runs to exist for lcx_b_tb_two"
     );
     assert_eq_layout_data(&layout_truth.data, &layout.data, "lcx_b_tb_two");
@@ -210,7 +210,7 @@ fn assert_builders_produce_same_result<'b>(
     // Testing tree builder creation with a dirty layout context
     let layout = build_layout_with_tree(&mut fcx, &mut lcx_c, &topts, &with_tree_builder);
     assert!(
-        layout.data.runs.is_empty() == expect_empty,
+        layout.data.paragraph.runs.is_empty() == expect_empty,
         "expected runs to exist for lcx_c_tb_one"
     );
     assert_eq_layout_data(&layout_truth.data, &layout.data, "lcx_c_tb_one");
@@ -221,7 +221,7 @@ fn assert_builders_produce_same_result<'b>(
     // Testing ranged builder creation with a dirty layout context
     let layout = build_layout_with_ranged(&mut fcx, &mut lcx_d, &ropts, &with_ranged_builder);
     assert!(
-        layout.data.runs.is_empty() == expect_empty,
+        layout.data.paragraph.runs.is_empty() == expect_empty,
         "expected runs to exist for lcx_d_rb_one"
     );
     assert_eq_layout_data(&layout_truth.data, &layout.data, "lcx_d_rb_one");

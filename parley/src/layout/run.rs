@@ -43,7 +43,12 @@ impl<'a, B: Brush> Run<'a, B> {
 
     /// Returns the font for the run.
     pub fn font(&self) -> &FontData {
-        self.layout.data.fonts.get(self.data.font_index).unwrap()
+        self.layout
+            .data
+            .paragraph
+            .fonts
+            .get(self.data.font_index)
+            .unwrap()
     }
 
     /// Returns the font size for the run.
@@ -66,6 +71,7 @@ impl<'a, B: Brush> Run<'a, B> {
     pub fn normalized_coords(&self) -> &[i16] {
         self.layout
             .data
+            .paragraph
             .coords
             .get(self.data.coords_range.clone())
             .unwrap_or(&[])
@@ -125,7 +131,7 @@ impl<'a, B: Brush> Run<'a, B> {
         Some(Cluster {
             path: ClusterPath::new(self.line_index, self.index, original_index as u32),
             run: self.clone(),
-            data: self.layout.data.clusters.get(index)?,
+            data: self.layout.data.paragraph.clusters.get(index)?,
         })
     }
 
@@ -214,7 +220,7 @@ impl<'a, B: Brush> Iterator for Clusters<'a, B> {
                 (index - self.run.cluster_range().start) as u32,
             ),
             run: self.run.clone(),
-            data: self.run.layout.data.clusters.get(index)?,
+            data: self.run.layout.data.paragraph.clusters.get(index)?,
         })
     }
 }

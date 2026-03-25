@@ -224,7 +224,7 @@ impl LineItemData {
         self.is_whitespace = true;
         if self.is_rtl() {
             // RTL runs check for "trailing" whitespace at the front.
-            for cluster in layout_data.clusters[self.cluster_range.clone()].iter() {
+            for cluster in layout_data.paragraph.clusters[self.cluster_range.clone()].iter() {
                 if cluster.info.is_whitespace() {
                     self.has_trailing_whitespace = true;
                 } else {
@@ -233,7 +233,7 @@ impl LineItemData {
                 }
             }
         } else {
-            for cluster in layout_data.clusters[self.cluster_range.clone()]
+            for cluster in layout_data.paragraph.clusters[self.cluster_range.clone()]
                 .iter()
                 .rev()
             {
@@ -265,7 +265,7 @@ pub(crate) struct LayoutItem {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LayoutData<B: Brush> {
+pub(crate) struct ShapedParagraph<B: Brush> {
     // General settings (directly from the "builder")
     /// The display scale factor
     pub(crate) scale: f32,
@@ -287,6 +287,11 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) items: Vec<LayoutItem>,
     pub(crate) clusters: Vec<ClusterData>,
     pub(crate) glyphs: Vec<Glyph>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LayoutData<B: Brush> {
+    pub(crate) paragraph: ShapedParagraph<B>,
 
     // Output of line breaking
     /// The lines in the
@@ -315,16 +320,13 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) indent_options: IndentOptions,
 }
 
-impl<B: Brush> Default for LayoutData<B> {
+impl<B: Brush> Default for ShapedParagraph<B> {
     fn default() -> Self {
         Self {
             scale: 1.,
             quantize: true,
             base_level: 0,
             text_len: 0,
-            width: 0.,
-            full_width: 0.,
-            height: 0.,
             fonts: Vec::new(),
             coords: Vec::new(),
             styles: Vec::new(),
@@ -333,6 +335,17 @@ impl<B: Brush> Default for LayoutData<B> {
             items: Vec::new(),
             clusters: Vec::new(),
             glyphs: Vec::new(),
+        }
+    }
+}
+
+impl<B: Brush> Default for LayoutData<B> {
+    fn default() -> Self {
+        Self {
+            paragraph: ShapedParagraph::default(),
+            width: 0.,
+            full_width: 0.,
+            height: 0.,
             lines: Vec::new(),
             line_items: Vec::new(),
             #[cfg(feature = "accesskit")]
@@ -345,15 +358,12 @@ impl<B: Brush> Default for LayoutData<B> {
     }
 }
 
-impl<B: Brush> LayoutData<B> {
+impl<B: Brush> ShapedParagraph<B> {
     pub(crate) fn clear(&mut self) {
         self.scale = 1.;
         self.quantize = true;
         self.base_level = 0;
         self.text_len = 0;
-        self.width = 0.;
-        self.full_width = 0.;
-        self.height = 0.;
         self.fonts.clear();
         self.coords.clear();
         self.styles.clear();
@@ -362,8 +372,6 @@ impl<B: Brush> LayoutData<B> {
         self.items.clear();
         self.clusters.clear();
         self.glyphs.clear();
-        self.lines.clear();
-        self.line_items.clear();
     }
 
     /// Push an inline box to the list of items.
@@ -488,8 +496,28 @@ impl<B: Brush> LayoutData<B> {
     }
 }
 
-pub(crate) struct LayoutDataSink<'a, B: Brush> {
-    data: &'a mut LayoutData<B>,
+impl<B: Brush> LayoutData<B> {
+    pub(crate) fn clear(&mut self) {
+        self.paragraph.clear();
+        self.width = 0.;
+        self.full_width = 0.;
+        self.height = 0.;
+        self.lines.clear();
+        self.line_items.clear();
+    }
+
+    pub(crate) fn finish(&mut self) {
+        self.paragraph.finish();
+    }
+
+    // TODO: this method does not handle mixed direction text at all.
+    pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
+        self.paragraph.calculate_content_widths()
+    }
+}
+
+pub(crate) struct ShapedParagraphSink<'a, B: Brush> {
+    paragraph: &'a mut ShapedParagraph<B>,
     pending_run: Option<PendingRun>,
 }
 
@@ -498,38 +526,37 @@ struct PendingRun {
     cluster_start: usize,
 }
 
-impl<'a, B: Brush> LayoutDataSink<'a, B> {
-    /// Compatibility sink that writes streamed shaping output directly into the
-    /// existing `LayoutData` buffers, preserving the current storage model
-    /// while the pipeline seam is extracted.
-    pub(crate) fn new(data: &'a mut LayoutData<B>) -> Self {
+impl<'a, B: Brush> ShapedParagraphSink<'a, B> {
+    /// Sink that writes streamed shaping output directly into a shaped
+    /// paragraph's owned buffers.
+    pub(crate) fn new(paragraph: &'a mut ShapedParagraph<B>) -> Self {
         Self {
-            data,
+            paragraph,
             pending_run: None,
         }
     }
 }
 
-impl<B: Brush> ShapeSink for LayoutDataSink<'_, B> {
+impl<B: Brush> ShapeSink for ShapedParagraphSink<'_, B> {
     fn push_inline_box(&mut self, index: usize) {
-        self.data.push_inline_box_impl(index);
+        self.paragraph.push_inline_box_impl(index);
     }
 
     fn begin_run(&mut self, run: ShapeRun<'_>) {
-        let coords_start = self.data.coords.len();
-        self.data
+        let coords_start = self.paragraph.coords.len();
+        self.paragraph
             .coords
             .extend(run.coords.iter().map(|c| c.to_bits()));
-        let coords_end = self.data.coords.len();
+        let coords_end = self.paragraph.coords.len();
 
         let font_index = self
-            .data
+            .paragraph
             .fonts
             .iter()
             .position(|f| *f == run.font)
             .unwrap_or_else(|| {
-                let index = self.data.fonts.len();
-                self.data.fonts.push(run.font);
+                let index = self.paragraph.fonts.len();
+                self.paragraph.fonts.push(run.font);
                 index
             });
 
@@ -542,24 +569,24 @@ impl<B: Brush> ShapeSink for LayoutDataSink<'_, B> {
                 coords_range: coords_start..coords_end,
                 text_range: run.text_range,
                 bidi_level: run.bidi_level,
-                cluster_range: self.data.clusters.len()..self.data.clusters.len(),
-                glyph_start: self.data.glyphs.len(),
+                cluster_range: self.paragraph.clusters.len()..self.paragraph.clusters.len(),
+                glyph_start: self.paragraph.glyphs.len(),
                 metrics: run.metrics,
                 word_spacing: run.word_spacing,
                 letter_spacing: run.letter_spacing,
                 advance: 0.0,
             },
-            cluster_start: self.data.clusters.len(),
+            cluster_start: self.paragraph.clusters.len(),
         });
     }
 
     fn push_glyph(&mut self, glyph: Glyph) {
-        self.data.glyphs.push(glyph);
+        self.paragraph.glyphs.push(glyph);
     }
 
     fn push_cluster(&mut self, cluster: ShapeCluster) {
         let run = &self.pending_run.as_ref().unwrap().run;
-        let total_run_glyphs = self.data.glyphs.len() - run.glyph_start;
+        let total_run_glyphs = self.paragraph.glyphs.len() - run.glyph_start;
 
         let (glyph_len, glyph_offset, advance) = match cluster.glyphs {
             ShapeClusterGlyphs::Inline(glyph_id) => (0xFF_u8, glyph_id, cluster.advance),
@@ -572,7 +599,7 @@ impl<B: Brush> ShapeSink for LayoutDataSink<'_, B> {
             ShapeClusterGlyphs::None => (0_u8, 0_u32, cluster.advance),
         };
 
-        self.data.clusters.push(ClusterData {
+        self.paragraph.clusters.push(ClusterData {
             info: ClusterInfo::new(cluster.boundary, cluster.source_char),
             flags: cluster.flags,
             style_index: cluster.style_index,
@@ -587,7 +614,7 @@ impl<B: Brush> ShapeSink for LayoutDataSink<'_, B> {
     fn end_run(&mut self, advance: f32) {
         let mut pending_run = self.pending_run.take().unwrap();
         pending_run.run.advance = advance;
-        pending_run.run.cluster_range = pending_run.cluster_start..self.data.clusters.len();
+        pending_run.run.cluster_range = pending_run.cluster_start..self.paragraph.clusters.len();
         if pending_run.run.bidi_level & 1 == 1 {
             // Reverse clusters into logical order for RTL.
             //
@@ -596,14 +623,14 @@ impl<B: Brush> ShapeSink for LayoutDataSink<'_, B> {
             //
             // TODO: if the streamed shaping path later guarantees logical-order
             // cluster emission for all sinks, this reversal may be removable.
-            self.data.clusters[pending_run.run.cluster_range.clone()].reverse();
+            self.paragraph.clusters[pending_run.run.cluster_range.clone()].reverse();
         }
         if !pending_run.run.cluster_range.is_empty() {
-            self.data.runs.push(pending_run.run);
-            self.data.items.push(LayoutItem {
+            self.paragraph.runs.push(pending_run.run);
+            self.paragraph.items.push(LayoutItem {
                 kind: LayoutItemKind::TextRun,
-                index: self.data.runs.len() - 1,
-                bidi_level: self.data.runs.last().unwrap().bidi_level,
+                index: self.paragraph.runs.len() - 1,
+                bidi_level: self.paragraph.runs.last().unwrap().bidi_level,
             });
         }
     }

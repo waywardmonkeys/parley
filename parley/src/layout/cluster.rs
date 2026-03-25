@@ -216,7 +216,8 @@ impl<'a, B: Brush> Cluster<'a, B> {
         } else {
             let start = self.run.data.glyph_start + self.data.glyph_offset as usize;
             GlyphIter::Slice(
-                self.run.layout.data.glyphs[start..start + self.data.glyph_len as usize].iter(),
+                self.run.layout.data.paragraph.glyphs[start..start + self.data.glyph_len as usize]
+                    .iter(),
             )
         }
     }
@@ -255,7 +256,7 @@ impl<'a, B: Brush> Cluster<'a, B> {
             .cluster(self.run.layout)
         } else {
             let index = self.text_range().end;
-            if index >= self.run.layout.data.text_len {
+            if index >= self.run.layout.data.paragraph.text_len {
                 return None;
             }
             // We have to search for the cluster containing our end index

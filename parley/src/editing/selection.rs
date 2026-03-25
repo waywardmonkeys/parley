@@ -67,7 +67,8 @@ impl Selection {
                 h_pos: None,
             }
         } else {
-            Cursor::from_byte_index(layout, layout.data.text_len, Affinity::Upstream).into()
+            Cursor::from_byte_index(layout, layout.data.paragraph.text_len, Affinity::Upstream)
+                .into()
         }
     }
 

@@ -9,10 +9,10 @@ use crate::{Brush, data::LayoutData};
 
 fn canonicalize_layout_data<B: Brush>(layout_data: &LayoutData<B>) -> LayoutData<B> {
     let mut normalized = layout_data.clone();
-    let mut canonical_styles = Vec::with_capacity(normalized.styles.len());
-    let mut remap = Vec::with_capacity(normalized.styles.len());
+    let mut canonical_styles = Vec::with_capacity(normalized.paragraph.styles.len());
+    let mut remap = Vec::with_capacity(normalized.paragraph.styles.len());
 
-    for style in &normalized.styles {
+    for style in &normalized.paragraph.styles {
         if let Some(index) = canonical_styles
             .iter()
             .position(|existing| existing == style)
@@ -25,13 +25,13 @@ fn canonicalize_layout_data<B: Brush>(layout_data: &LayoutData<B>) -> LayoutData
         }
     }
 
-    for cluster in &mut normalized.clusters {
+    for cluster in &mut normalized.paragraph.clusters {
         cluster.style_index = remap[cluster.style_index as usize];
     }
-    for glyph in &mut normalized.glyphs {
+    for glyph in &mut normalized.paragraph.glyphs {
         glyph.style_index = remap[glyph.style_index as usize];
     }
-    normalized.styles = canonical_styles;
+    normalized.paragraph.styles = canonical_styles;
     normalized
 }
 
@@ -40,28 +40,58 @@ pub(crate) fn assert_eq_layout_data<B: Brush>(a: &LayoutData<B>, b: &LayoutData<
     let a = canonicalize_layout_data(a);
     let b = canonicalize_layout_data(b);
 
-    assert_eq!(a.scale, b.scale, "{case} scale mismatch");
-    assert_eq!(a.quantize, b.quantize, "{case} quantize mismatch");
-    assert_eq!(a.base_level, b.base_level, "{case} base_level mismatch");
-    assert_eq!(a.text_len, b.text_len, "{case} text_len mismatch");
+    assert_eq!(
+        a.paragraph.scale, b.paragraph.scale,
+        "{case} scale mismatch"
+    );
+    assert_eq!(
+        a.paragraph.quantize, b.paragraph.quantize,
+        "{case} quantize mismatch"
+    );
+    assert_eq!(
+        a.paragraph.base_level, b.paragraph.base_level,
+        "{case} base_level mismatch"
+    );
+    assert_eq!(
+        a.paragraph.text_len, b.paragraph.text_len,
+        "{case} text_len mismatch"
+    );
     assert_eq!(a.width, b.width, "{case} width mismatch");
     assert_eq!(a.full_width, b.full_width, "{case} full_width mismatch");
     assert_eq!(a.height, b.height, "{case} height mismatch");
-    assert_eq!(a.fonts, b.fonts, "{case} fonts mismatch");
-    assert_eq!(a.coords, b.coords, "{case} coords mismatch");
+    assert_eq!(
+        a.paragraph.fonts, b.paragraph.fonts,
+        "{case} fonts mismatch"
+    );
+    assert_eq!(
+        a.paragraph.coords, b.paragraph.coords,
+        "{case} coords mismatch"
+    );
 
     // Input (/ output of style resolution)
-    assert_eq!(a.styles, b.styles, "{case} styles mismatch");
     assert_eq!(
-        a.inline_boxes, b.inline_boxes,
+        a.paragraph.styles, b.paragraph.styles,
+        "{case} styles mismatch"
+    );
+    assert_eq!(
+        a.paragraph.inline_boxes, b.paragraph.inline_boxes,
         "{case} inline_boxes mismatch"
     );
 
     // Output of shaping
-    assert_eq!(a.runs, b.runs, "{case} runs mismatch");
-    assert_eq!(a.items, b.items, "{case} items mismatch");
-    assert_eq!(a.clusters, b.clusters, "{case} clusters mismatch");
-    assert_eq!(a.glyphs, b.glyphs, "{case} glyphs mismatch");
+    assert_eq!(a.paragraph.runs, b.paragraph.runs, "{case} runs mismatch");
+    assert_eq!(
+        a.paragraph.items, b.paragraph.items,
+        "{case} items mismatch"
+    );
+    assert_eq!(
+        a.paragraph.clusters, b.paragraph.clusters,
+        "{case} clusters mismatch"
+    );
+    assert_eq!(
+        a.paragraph.glyphs, b.paragraph.glyphs,
+        "{case} glyphs mismatch"
+    );
 
     // Output of line breaking
     assert_eq!(a.lines, b.lines, "{case} lines mismatch");

@@ -58,11 +58,11 @@ impl<'a, B: Brush> Line<'a, B> {
                 layout: self.layout,
                 line_index: self.index,
                 index: original_index as u32,
-                data: self.layout.data.runs.get(item.index)?,
+                data: self.layout.data.paragraph.runs.get(item.index)?,
                 line_data: Some(item),
             }),
             LayoutItemKind::InlineBox => {
-                LineItem::InlineBox(self.layout.data.inline_boxes.get(item.index)?)
+                LineItem::InlineBox(self.layout.data.paragraph.inline_boxes.get(item.index)?)
             }
         })
     }
@@ -84,11 +84,11 @@ impl<'a, B: Brush> Line<'a, B> {
                     layout: copy.layout,
                     line_index: copy.index,
                     index: item_index as u32,
-                    data: &copy.layout.data.runs[line_data.index],
+                    data: &copy.layout.data.paragraph.runs[line_data.index],
                     line_data: Some(line_data),
                 }),
                 LayoutItemKind::InlineBox => {
-                    LineItem::InlineBox(&copy.layout.data.inline_boxes[line_data.index])
+                    LineItem::InlineBox(&copy.layout.data.paragraph.inline_boxes[line_data.index])
                 }
             })
     }
@@ -292,7 +292,7 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                             glyph_count += 1;
                             advance += glyph.advance;
                         }
-                        let style = run.layout.data.styles.get(style_index)?;
+                        let style = run.layout.data.paragraph.styles.get(style_index)?;
                         let glyph_start = self.glyph_start;
                         self.glyph_start += glyph_count;
                         let offset = self.offset;

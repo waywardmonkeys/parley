@@ -269,10 +269,10 @@ fn build_into_layout<B: Brush>(
     crate::analysis::analyze_text(lcx, text);
 
     layout.data.clear();
-    layout.data.scale = scale;
-    layout.data.quantize = quantize;
-    layout.data.base_level = lcx.bidi.base_level();
-    layout.data.text_len = text.len();
+    layout.data.paragraph.scale = scale;
+    layout.data.paragraph.quantize = quantize;
+    layout.data.paragraph.base_level = lcx.bidi.base_level();
+    layout.data.paragraph.text_len = text.len();
 
     let mut char_index = 0;
     for style_run in &lcx.style_runs {
@@ -285,6 +285,7 @@ fn build_into_layout<B: Brush>(
     // Copy the visual styles into the layout
     layout
         .data
+        .paragraph
         .styles
         .extend(lcx.style_table.iter().map(|s| s.as_layout_style()));
 
@@ -309,8 +310,11 @@ fn build_into_layout<B: Brush>(
     }
 
     // Move inline boxes into the layout
-    layout.data.inline_boxes.clear();
-    core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
+    layout.data.paragraph.inline_boxes.clear();
+    core::mem::swap(
+        &mut layout.data.paragraph.inline_boxes,
+        &mut lcx.inline_boxes,
+    );
 
     layout.data.finish();
 }

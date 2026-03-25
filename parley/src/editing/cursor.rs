@@ -34,7 +34,7 @@ impl Cursor {
             }
         } else {
             Self {
-                index: layout.data.text_len,
+                index: layout.data.paragraph.text_len,
                 affinity: Affinity::Upstream,
             }
         }
@@ -61,7 +61,7 @@ impl Cursor {
                 }
             }
         } else {
-            (layout.data.text_len, Affinity::Downstream)
+            (layout.data.paragraph.text_len, Affinity::Downstream)
         };
         Self { index, affinity }
     }
@@ -77,7 +77,7 @@ impl Cursor {
         let index = run
             .get(span_path.logical_index() + pos.character_index)
             .map(|cluster| cluster.text_range().start)
-            .unwrap_or(layout.data.text_len);
+            .unwrap_or(layout.data.paragraph.text_len);
         Some(Self::from_byte_index(layout, index, Affinity::Downstream))
     }
 
@@ -380,7 +380,7 @@ impl Cursor {
         layout: &Layout<B>,
         layout_access: &LayoutAccessibility,
     ) -> Option<TextPosition> {
-        if layout.data.text_len == 0 {
+        if layout.data.paragraph.text_len == 0 {
             // If the text is empty, just return the first node with a
             // character index of 0.
             return Some(TextPosition {
@@ -403,9 +403,10 @@ impl Cursor {
         // If we're at the end of the layout and the layout ends with a newline
         // then make sure we use the "phantom" run at the end so that
         // AccessKit has correct visual geometry for the cursor.
-        let (span_path, character_index) = if self.index == layout.data.text_len
+        let (span_path, character_index) = if self.index == layout.data.paragraph.text_len
             && layout
                 .data
+                .paragraph
                 .clusters
                 .last()
                 .map(|cluster| cluster.info.whitespace() == Whitespace::Newline)
