@@ -14,6 +14,7 @@ use core::ops::{Bound, Range, RangeBounds};
 
 use crate::InlineBoxKind;
 use crate::inline_box::InlineBox;
+use crate::layout::data::ShapedParagraph;
 use crate::resolve::{ResolvedStyle, StyleRun, tree::ItemKind};
 
 /// Builder for constructing a text layout with ranged attributes.
@@ -51,14 +52,23 @@ impl<B: Brush> RangedBuilder<'_, B> {
     }
 
     pub fn build_into(self, layout: &mut Layout<B>, text: impl AsRef<str>) {
+        layout.data.clear();
+        self.build_into_paragraph(&mut layout.data.paragraph, text);
+    }
+
+    pub(crate) fn build_into_paragraph(
+        self,
+        paragraph: &mut ShapedParagraph<B>,
+        text: impl AsRef<str>,
+    ) {
         // Apply RangedStyleBuilder styles directly to style-table/style-run state.
         self.lcx
             .ranged_style_builder
             .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
 
-        // Call generic layout builder method
-        build_into_layout(
-            layout,
+        // Call generic shaped paragraph builder method.
+        build_into_shaped_paragraph(
+            paragraph,
             self.scale,
             self.quantize,
             text.as_ref(),
@@ -143,12 +153,22 @@ impl<B: Brush> StyleRunBuilder<'_, B> {
     }
 
     pub fn build_into(self, layout: &mut Layout<B>, text: impl AsRef<str>) {
+        layout.data.clear();
+        self.build_into_paragraph(&mut layout.data.paragraph, text);
+    }
+
+    pub(crate) fn build_into_paragraph(
+        self,
+        paragraph: &mut ShapedParagraph<B>,
+        text: impl AsRef<str>,
+    ) {
         assert!(
             self.cursor == self.len,
             "StyleRunBuilder requires runs that cover the full text"
         );
-        build_into_layout(
-            layout,
+
+        build_into_shaped_paragraph(
+            paragraph,
             self.scale,
             self.quantize,
             text.as_ref(),
@@ -226,14 +246,26 @@ impl<B: Brush> TreeBuilder<'_, B> {
 
     #[inline]
     pub fn build_into(self, layout: &mut Layout<B>) -> String {
+        layout.data.clear();
+        self.build_into_paragraph(&mut layout.data.paragraph)
+    }
+
+    pub(crate) fn build_into_paragraph(self, paragraph: &mut ShapedParagraph<B>) -> String {
         // Apply TreeStyleBuilder styles to LayoutContext.
         let text = self
             .lcx
             .tree_style_builder
             .finish(&mut self.lcx.style_table, &mut self.lcx.style_runs);
 
-        // Call generic layout builder method
-        build_into_layout(layout, self.scale, self.quantize, &text, self.lcx, self.fcx);
+        // Call generic shaped paragraph builder method.
+        build_into_shaped_paragraph(
+            paragraph,
+            self.scale,
+            self.quantize,
+            &text,
+            self.lcx,
+            self.fcx,
+        );
 
         text
     }
@@ -246,8 +278,8 @@ impl<B: Brush> TreeBuilder<'_, B> {
     }
 }
 
-fn build_into_layout<B: Brush>(
-    layout: &mut Layout<B>,
+fn build_into_shaped_paragraph<B: Brush>(
+    paragraph: &mut ShapedParagraph<B>,
     scale: f32,
     quantize: bool,
     text: &str,
@@ -268,11 +300,11 @@ fn build_into_layout<B: Brush>(
 
     crate::analysis::analyze_text(lcx, text);
 
-    layout.data.clear();
-    layout.data.paragraph.scale = scale;
-    layout.data.paragraph.quantize = quantize;
-    layout.data.paragraph.base_level = lcx.bidi.base_level();
-    layout.data.paragraph.text_len = text.len();
+    paragraph.clear();
+    paragraph.scale = scale;
+    paragraph.quantize = quantize;
+    paragraph.base_level = lcx.bidi.base_level();
+    paragraph.text_len = text.len();
 
     let mut char_index = 0;
     for style_run in &lcx.style_runs {
@@ -282,10 +314,8 @@ fn build_into_layout<B: Brush>(
         }
     }
 
-    // Copy the visual styles into the layout
-    layout
-        .data
-        .paragraph
+    // Copy the visual styles into the shaped paragraph.
+    paragraph
         .styles
         .extend(lcx.style_table.iter().map(|s| s.as_layout_style()));
 
@@ -293,30 +323,24 @@ fn build_into_layout<B: Brush>(
     // Note: It's important that this is a stable sort to allow users to control the order of contiguous inline boxes
     lcx.inline_boxes.sort_by_key(|b| b.index);
 
-    {
-        let query = fcx.collection.query(&mut fcx.source_cache);
-        super::shape::shape_text(
-            &lcx.rcx,
-            query,
-            &lcx.style_table,
-            &lcx.inline_boxes,
-            &lcx.info,
-            lcx.bidi.levels(),
-            &mut lcx.scx,
-            text,
-            layout,
-            &lcx.analysis_data_sources,
-        );
-    }
-
-    // Move inline boxes into the layout
-    layout.data.paragraph.inline_boxes.clear();
-    core::mem::swap(
-        &mut layout.data.paragraph.inline_boxes,
-        &mut lcx.inline_boxes,
+    let query = fcx.collection.query(&mut fcx.source_cache);
+    super::shape::shape_text(
+        &lcx.rcx,
+        query,
+        &lcx.style_table,
+        &lcx.inline_boxes,
+        &lcx.info,
+        lcx.bidi.levels(),
+        &mut lcx.scx,
+        text,
+        paragraph,
+        &lcx.analysis_data_sources,
     );
 
-    layout.data.finish();
+    // Move inline boxes into the shaped paragraph.
+    paragraph.inline_boxes.clear();
+    core::mem::swap(&mut paragraph.inline_boxes, &mut lcx.inline_boxes);
+    paragraph.finish();
 }
 
 fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {

@@ -3,17 +3,21 @@
 
 //! Test that the various builders produce the same results.
 
-use std::{borrow::Cow, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, path::PathBuf, string::String, sync::Arc};
 
 use fontique::{Collection, CollectionOptions, FontStyle, FontWeight, FontWidth, SourceCache};
 use parlance::FontFamilyName;
 use peniko::{Blob, color::palette};
 
-use super::utils::{ColorBrush, asserts::assert_eq_layout_data};
+use super::utils::{
+    ColorBrush,
+    asserts::{assert_eq_layout_data, assert_eq_shaped_paragraph},
+};
+use crate::layout::data::ShapedParagraph;
 use crate::{
-    FontContext, FontFamily, FontFeatures, FontVariations, Layout, LayoutContext, LineHeight,
-    OverflowWrap, RangedBuilder, StyleProperty, StyleRunBuilder, TextStyle, TextWrapMode,
-    TreeBuilder, WordBreak,
+    FontContext, FontFamily, FontFeatures, FontVariations, InlineBox, InlineBoxKind, Layout,
+    LayoutContext, LineHeight, OverflowWrap, RangedBuilder, StyleProperty, StyleRunBuilder,
+    TextStyle, TextWrapMode, TreeBuilder, WordBreak,
 };
 
 // TODO: `FONT_FAMILY_LIST`, `load_fonts`, and `create_font_context` are
@@ -128,6 +132,32 @@ fn build_layout_with_style_runs(
     layout
 }
 
+fn build_paragraph_with_ranged(
+    fcx: &mut FontContext,
+    lcx: &mut LayoutContext<ColorBrush>,
+    opts: &RangedOptions<'_>,
+    with_builder: impl Fn(&mut RangedBuilder<'_, ColorBrush>),
+) -> ShapedParagraph<ColorBrush> {
+    let mut rb = lcx.ranged_builder(fcx, opts.text, opts.scale, opts.quantize);
+    with_builder(&mut rb);
+    let mut paragraph = ShapedParagraph::default();
+    rb.build_into_paragraph(&mut paragraph, opts.text);
+    paragraph
+}
+
+fn build_paragraph_with_tree(
+    fcx: &mut FontContext,
+    lcx: &mut LayoutContext<ColorBrush>,
+    opts: &TreeOptions<'_, '_>,
+    with_builder: impl Fn(&mut TreeBuilder<'_, ColorBrush>),
+) -> (ShapedParagraph<ColorBrush>, String) {
+    let mut tb = lcx.tree_builder(fcx, opts.scale, opts.quantize, opts.root_style);
+    with_builder(&mut tb);
+    let mut paragraph = ShapedParagraph::default();
+    let text = tb.build_into_paragraph(&mut paragraph);
+    (paragraph, text)
+}
+
 /// Computes layout in various ways to ensure they all produce the same result.
 ///
 /// ```text
@@ -225,6 +255,77 @@ fn assert_builders_produce_same_result<'b>(
         "expected runs to exist for lcx_d_rb_one"
     );
     assert_eq_layout_data(&layout_truth.data, &layout.data, "lcx_d_rb_one");
+}
+
+#[test]
+fn standalone_shaped_paragraph_matches_layout_paragraph() {
+    let mut fcx = create_font_context();
+    let mut lcx_layout = LayoutContext::new();
+    let mut lcx_paragraph = LayoutContext::new();
+    let mut lcx_tree = LayoutContext::new();
+    let root_style = TextStyle {
+        brush: ColorBrush::new(palette::css::BLACK),
+        font_family: FontFamily::from(FONT_FAMILY_LIST),
+        font_size: 16.0,
+        line_height: LineHeight::FontSizeRelative(1.25),
+        ..Default::default()
+    };
+    let opts = RangedOptions {
+        scale: 1.0,
+        quantize: true,
+        max_advance: Some(180.0),
+        text: "Hello inline box world\nمرحبا",
+    };
+    let tree_opts = TreeOptions {
+        scale: opts.scale,
+        quantize: opts.quantize,
+        max_advance: opts.max_advance,
+        root_style: &root_style,
+    };
+
+    let with_ranged_builder = |rb: &mut RangedBuilder<'_, ColorBrush>| {
+        rb.push_default(FontFamily::from(FONT_FAMILY_LIST));
+        rb.push_default(StyleProperty::Brush(ColorBrush::new(palette::css::BLACK)));
+        rb.push_default(StyleProperty::FontSize(16.0));
+        rb.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
+            1.25,
+        )));
+        rb.push(StyleProperty::FontWeight(FontWeight::new(600.0)), 0..5);
+        rb.push_inline_box(InlineBox {
+            id: 7,
+            index: 6,
+            width: 24.0,
+            height: 18.0,
+            kind: InlineBoxKind::InFlow,
+        });
+    };
+    let with_tree_builder = |tb: &mut TreeBuilder<'_, ColorBrush>| {
+        tb.push_style_modification_span([&StyleProperty::FontWeight(FontWeight::new(600.0))]);
+        tb.push_text("Hello");
+        tb.pop_style_span();
+        tb.push_text(" ");
+        tb.push_inline_box(InlineBox {
+            id: 7,
+            index: 0,
+            width: 24.0,
+            height: 18.0,
+            kind: InlineBoxKind::InFlow,
+        });
+        tb.push_text("inline box world\nمرحبا");
+    };
+
+    let layout = build_layout_with_ranged(&mut fcx, &mut lcx_layout, &opts, with_ranged_builder);
+    let paragraph =
+        build_paragraph_with_ranged(&mut fcx, &mut lcx_paragraph, &opts, with_ranged_builder);
+    let (tree_paragraph, _text) =
+        build_paragraph_with_tree(&mut fcx, &mut lcx_tree, &tree_opts, with_tree_builder);
+
+    assert_eq_shaped_paragraph(
+        &layout.data.paragraph,
+        &paragraph,
+        "layout_vs_ranged_paragraph",
+    );
+    assert_eq_shaped_paragraph(&paragraph, &tree_paragraph, "ranged_vs_tree_paragraph");
 }
 
 /// Returns a root style that uses non-default values.

@@ -5,14 +5,15 @@
 
 use std::vec::Vec;
 
-use crate::{Brush, data::LayoutData};
+use crate::Brush;
+use crate::layout::data::{LayoutData, ShapedParagraph};
 
-fn canonicalize_layout_data<B: Brush>(layout_data: &LayoutData<B>) -> LayoutData<B> {
-    let mut normalized = layout_data.clone();
-    let mut canonical_styles = Vec::with_capacity(normalized.paragraph.styles.len());
-    let mut remap = Vec::with_capacity(normalized.paragraph.styles.len());
+fn canonicalize_shaped_paragraph<B: Brush>(paragraph: &ShapedParagraph<B>) -> ShapedParagraph<B> {
+    let mut normalized = paragraph.clone();
+    let mut canonical_styles = Vec::with_capacity(normalized.styles.len());
+    let mut remap = Vec::with_capacity(normalized.styles.len());
 
-    for style in &normalized.paragraph.styles {
+    for style in &normalized.styles {
         if let Some(index) = canonical_styles
             .iter()
             .position(|existing| existing == style)
@@ -25,14 +26,46 @@ fn canonicalize_layout_data<B: Brush>(layout_data: &LayoutData<B>) -> LayoutData
         }
     }
 
-    for cluster in &mut normalized.paragraph.clusters {
+    for cluster in &mut normalized.clusters {
         cluster.style_index = remap[cluster.style_index as usize];
     }
-    for glyph in &mut normalized.paragraph.glyphs {
+    for glyph in &mut normalized.glyphs {
         glyph.style_index = remap[glyph.style_index as usize];
     }
-    normalized.paragraph.styles = canonical_styles;
+    normalized.styles = canonical_styles;
     normalized
+}
+
+fn canonicalize_layout_data<B: Brush>(layout_data: &LayoutData<B>) -> LayoutData<B> {
+    let mut normalized = layout_data.clone();
+    normalized.paragraph = canonicalize_shaped_paragraph(&normalized.paragraph);
+    normalized
+}
+
+pub(crate) fn assert_eq_shaped_paragraph<B: Brush>(
+    a: &ShapedParagraph<B>,
+    b: &ShapedParagraph<B>,
+    case: &str,
+) {
+    let a = canonicalize_shaped_paragraph(a);
+    let b = canonicalize_shaped_paragraph(b);
+
+    assert_eq!(a.scale, b.scale, "{case} scale mismatch");
+    assert_eq!(a.quantize, b.quantize, "{case} quantize mismatch");
+    assert_eq!(a.base_level, b.base_level, "{case} base_level mismatch");
+    assert_eq!(a.text_len, b.text_len, "{case} text_len mismatch");
+    assert_eq!(a.fonts, b.fonts, "{case} fonts mismatch");
+    assert_eq!(a.coords, b.coords, "{case} coords mismatch");
+    assert_eq!(a.styles, b.styles, "{case} styles mismatch");
+    assert_eq!(
+        a.inline_boxes, b.inline_boxes,
+        "{case} inline_boxes mismatch"
+    );
+    assert_eq!(a.runs, b.runs, "{case} runs mismatch");
+    assert_eq!(a.items, b.items, "{case} items mismatch");
+    assert_eq!(a.clusters, b.clusters, "{case} clusters mismatch");
+    assert_eq!(a.glyphs, b.glyphs, "{case} glyphs mismatch");
+    assert_eq!(a, b, "{case} ShapedParagraph mismatch");
 }
 
 /// Assert that the two provided `LayoutData` are equal.

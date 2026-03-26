@@ -506,10 +506,6 @@ impl<B: Brush> LayoutData<B> {
         self.line_items.clear();
     }
 
-    pub(crate) fn finish(&mut self) {
-        self.paragraph.finish();
-    }
-
     // TODO: this method does not handle mixed direction text at all.
     pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
         self.paragraph.calculate_content_widths()

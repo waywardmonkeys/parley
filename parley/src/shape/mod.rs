@@ -9,14 +9,14 @@ use core::mem;
 use core::ops::RangeInclusive;
 use harfrust::ShapeOptions;
 
-use super::layout::{Glyph, Layout, RunMetrics};
+use super::layout::{Glyph, RunMetrics};
 use super::resolve::{ResolveContext, Resolved, ResolvedStyle};
 use super::style::{Brush, FontFeature, FontVariation};
 use crate::analysis::cluster::{Char, CharCluster, Status, Whitespace};
 use crate::analysis::{AnalysisDataSources, CharInfo};
 use crate::convert::script_to_harfrust;
 use crate::inline_box::InlineBox;
-use crate::layout::data::{ClusterData, ShapedParagraphSink};
+use crate::layout::data::{ClusterData, ShapedParagraph, ShapedParagraphSink};
 use crate::lru_cache::LruCache;
 use crate::pipeline::{ShapeCluster, ShapeClusterGlyphs, ShapeRun, ShapeSink};
 use crate::util::nearly_eq;
@@ -73,10 +73,10 @@ pub(crate) fn shape_text<'a, B: Brush>(
     levels: &[u8],
     scx: &mut ShapeContext,
     text: &str,
-    layout: &mut Layout<B>,
+    paragraph: &mut ShapedParagraph<B>,
     analysis_data_sources: &AnalysisDataSources,
 ) {
-    let mut sink = ShapedParagraphSink::new(&mut layout.data.paragraph);
+    let mut sink = ShapedParagraphSink::new(paragraph);
     shape_text_to_sink(
         rcx,
         fq,
