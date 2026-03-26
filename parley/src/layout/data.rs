@@ -215,7 +215,10 @@ impl LineItemData {
     /// If the item is a text run
     ///   - Determine if it consists entirely of whitespace (`is_whitespace` property)
     ///   - Determine if it has trailing whitespace (`has_trailing_whitespace` property)
-    pub(crate) fn compute_whitespace_properties<B: Brush>(&mut self, layout_data: &LayoutData<B>) {
+    pub(crate) fn compute_whitespace_properties<B: Brush>(
+        &mut self,
+        paragraph: &ShapedParagraph<B>,
+    ) {
         // Skip items which are not text runs
         if self.kind != LayoutItemKind::TextRun {
             return;
@@ -224,7 +227,7 @@ impl LineItemData {
         self.is_whitespace = true;
         if self.is_rtl() {
             // RTL runs check for "trailing" whitespace at the front.
-            for cluster in layout_data.paragraph.clusters[self.cluster_range.clone()].iter() {
+            for cluster in paragraph.clusters[self.cluster_range.clone()].iter() {
                 if cluster.info.is_whitespace() {
                     self.has_trailing_whitespace = true;
                 } else {
@@ -233,10 +236,7 @@ impl LineItemData {
                 }
             }
         } else {
-            for cluster in layout_data.paragraph.clusters[self.cluster_range.clone()]
-                .iter()
-                .rev()
-            {
+            for cluster in paragraph.clusters[self.cluster_range.clone()].iter().rev() {
                 if cluster.info.is_whitespace() {
                     self.has_trailing_whitespace = true;
                 } else {

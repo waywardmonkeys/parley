@@ -429,10 +429,6 @@ impl<'a, B: Brush> Cluster<'a, B> {
         Some(offset)
     }
 
-    pub(crate) fn info(&self) -> &super::data::ClusterInfo {
-        &self.data.info
-    }
-
     /// Returns the text length of the cluster in bytes.
     ///
     /// This is only used for tests, and is *not* part of the public API.

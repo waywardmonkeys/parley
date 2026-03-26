@@ -54,13 +54,13 @@ impl<'a, B: Brush> Line<'a, B> {
         let item = self.layout.data.line_items.get(index)?;
 
         Some(match item.kind {
-            LayoutItemKind::TextRun => LineItem::Run(Run {
-                layout: self.layout,
-                line_index: self.index,
-                index: original_index as u32,
-                data: self.layout.data.paragraph.runs.get(item.index)?,
-                line_data: Some(item),
-            }),
+            LayoutItemKind::TextRun => LineItem::Run(Run::new(
+                self.layout,
+                self.index,
+                original_index as u32,
+                self.layout.data.paragraph.runs.get(item.index)?,
+                Some(item),
+            )),
             LayoutItemKind::InlineBox => {
                 LineItem::InlineBox(self.layout.data.paragraph.inline_boxes.get(item.index)?)
             }
@@ -80,13 +80,13 @@ impl<'a, B: Brush> Line<'a, B> {
             .iter()
             .enumerate()
             .map(move |(item_index, line_data)| match line_data.kind {
-                LayoutItemKind::TextRun => LineItem::Run(Run {
-                    layout: copy.layout,
-                    line_index: copy.index,
-                    index: item_index as u32,
-                    data: &copy.layout.data.paragraph.runs[line_data.index],
-                    line_data: Some(line_data),
-                }),
+                LayoutItemKind::TextRun => LineItem::Run(Run::new(
+                    copy.layout,
+                    copy.index,
+                    item_index as u32,
+                    &copy.layout.data.paragraph.runs[line_data.index],
+                    Some(line_data),
+                )),
                 LayoutItemKind::InlineBox => {
                     LineItem::InlineBox(&copy.layout.data.paragraph.inline_boxes[line_data.index])
                 }
