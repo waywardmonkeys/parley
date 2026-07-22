@@ -29,6 +29,9 @@ pub struct ClusterData {
 impl ClusterData {
     pub const LIGATURE_START: u16 = 1;
     pub const LIGATURE_COMPONENT: u16 = 2;
+    pub(crate) const UNSAFE_TO_BREAK: u16 = 1 << 2;
+    pub(crate) const UNSAFE_TO_CONCAT: u16 = 1 << 3;
+    pub(crate) const SAFE_TO_INSERT_TATWEEL: u16 = 1 << 4;
 
     #[inline(always)]
     pub fn is_ligature_start(self) -> bool {
@@ -38,6 +41,24 @@ impl ClusterData {
     #[inline(always)]
     pub fn is_ligature_component(self) -> bool {
         self.flags & Self::LIGATURE_COMPONENT != 0
+    }
+
+    /// Whether a line break before this cluster requires reshaping both sides.
+    #[inline(always)]
+    pub fn unsafe_to_break(self) -> bool {
+        self.flags & Self::UNSAFE_TO_BREAK != 0
+    }
+
+    /// Whether concatenating independently-shaped text before this cluster can change shaping.
+    #[inline(always)]
+    pub fn unsafe_to_concat(self) -> bool {
+        self.flags & Self::UNSAFE_TO_CONCAT != 0
+    }
+
+    /// Whether a tatweel may safely be inserted before this cluster.
+    #[inline(always)]
+    pub fn safe_to_insert_tatweel(self) -> bool {
+        self.flags & Self::SAFE_TO_INSERT_TATWEEL != 0
     }
 }
 

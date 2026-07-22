@@ -6,6 +6,7 @@
 use core::ops::Range;
 
 use alloc::vec::Vec;
+use parlance::{FontFeature, Language, Script};
 
 use crate::{
     CharInfo, FontInstance, Glyph, ShapeOptions,
@@ -88,10 +89,13 @@ pub struct FontMetrics {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShapedText {
     runs: Vec<ShapedRun>,
+    run_shape_data: Vec<RunShapeData>,
+    active_breaks: Vec<ActiveBreak>,
     clusters: Vec<ClusterData>,
     glyphs: Vec<Glyph>,
     fonts: Vec<FontInstance>,
     normalized_coords: Vec<NormalizedCoord>,
+    features: Vec<FontFeature>,
 }
 
 impl ShapedText {
@@ -113,10 +117,13 @@ impl ShapedText {
     #[inline]
     pub fn clear(&mut self) {
         self.runs.clear();
+        self.run_shape_data.clear();
+        self.active_breaks.clear();
         self.clusters.clear();
         self.glyphs.clear();
         self.fonts.clear();
         self.normalized_coords.clear();
+        self.features.clear();
     }
 
     /// The shaped runs.
@@ -179,6 +186,264 @@ impl ShapedText {
         &self.normalized_coords
     }
 
+    /// Computes the minimal source ranges that must be reshaped when committing a break at
+    /// `pos`.
+    ///
+    /// Empty ranges mean that the boundary is already break-safe. `pos` must be a cluster
+    /// boundary within a shaped run.
+    pub fn unsafe_break_region(&self, pos: usize) -> ReshapeRanges {
+        let empty = ReshapeRanges {
+            tail: pos..pos,
+            head: pos..pos,
+        };
+        let Some((run_index, cluster_index)) = self.locate_cluster(pos) else {
+            return empty;
+        };
+        let run = &self.runs[run_index];
+        let clusters = &self.clusters[run.clusters_range.clone()];
+        let local = cluster_index - run.clusters_range.start;
+        if local == 0 || !clusters[local].unsafe_to_break() {
+            return empty;
+        }
+
+        let start_of =
+            |index: usize| run.range.byte_range.start + usize::from(clusters[index].text_offset);
+        let mut lo = local;
+        while lo > 0 && clusters[lo].unsafe_to_break() {
+            lo -= 1;
+        }
+        let mut hi = local + 1;
+        while hi < clusters.len() && clusters[hi].unsafe_to_break() {
+            hi += 1;
+        }
+        let head_end = if hi < clusters.len() {
+            start_of(hi)
+        } else {
+            run.range.byte_range.end
+        };
+        ReshapeRanges {
+            tail: start_of(lo)..pos,
+            head: pos..head_end,
+        }
+    }
+
+    /// Computes the minimal source range that must be reshaped when joining fragments at `pos`.
+    ///
+    /// An empty range means that the boundary is already concat-safe. `pos` must be a cluster
+    /// boundary within a shaped run.
+    pub fn unsafe_concat_region(&self, pos: usize) -> Range<usize> {
+        let empty = pos..pos;
+        let Some((run_index, cluster_index)) = self.locate_cluster(pos) else {
+            return empty;
+        };
+        let run = &self.runs[run_index];
+        let clusters = &self.clusters[run.clusters_range.clone()];
+        let local = cluster_index - run.clusters_range.start;
+        if local == 0 || !clusters[local].unsafe_to_concat() {
+            return empty;
+        }
+
+        let start_of =
+            |index: usize| run.range.byte_range.start + usize::from(clusters[index].text_offset);
+        let mut lo = local - 1;
+        while lo > 0 && clusters[lo].unsafe_to_concat() {
+            lo -= 1;
+        }
+        let mut hi = local + 1;
+        while hi < clusters.len() && clusters[hi].unsafe_to_concat() {
+            hi += 1;
+        }
+        let end = if hi < clusters.len() {
+            start_of(hi)
+        } else {
+            run.range.byte_range.end
+        };
+        start_of(lo)..end
+    }
+
+    fn locate_cluster(&self, pos: usize) -> Option<(usize, usize)> {
+        let run_index = self
+            .runs
+            .partition_point(|run| run.range.byte_range.start <= pos)
+            .checked_sub(1)?;
+        let run = &self.runs[run_index];
+        if pos >= run.range.byte_range.end {
+            return None;
+        }
+        let clusters = &self.clusters[run.clusters_range.clone()];
+        let offset = u16::try_from(pos - run.range.byte_range.start).ok()?;
+        let local = clusters
+            .binary_search_by_key(&offset, |cluster| cluster.text_offset)
+            .ok()?;
+        Some((run_index, run.clusters_range.start + local))
+    }
+
+    pub(super) fn reshape_locate(&self, text_range: Range<usize>) -> Option<ReshapeTarget> {
+        if text_range.is_empty() {
+            return None;
+        }
+        let run_index = self.runs.iter().position(|run| {
+            text_range.start >= run.range.byte_range.start
+                && text_range.end <= run.range.byte_range.end
+        })?;
+        let run = &self.runs[run_index];
+        let clusters = &self.clusters[run.clusters_range.clone()];
+        let lo_offset = u16::try_from(text_range.start - run.range.byte_range.start).ok()?;
+        let hi_offset = u16::try_from(text_range.end - run.range.byte_range.start).ok()?;
+        let first = clusters
+            .binary_search_by_key(&lo_offset, |cluster| cluster.text_offset)
+            .ok()?;
+        let last = if text_range.end == run.range.byte_range.end {
+            clusters.len()
+        } else {
+            clusters
+                .binary_search_by_key(&hi_offset, |cluster| cluster.text_offset)
+                .ok()?
+        };
+        if first > last {
+            return None;
+        }
+
+        let array_glyph_len = |cluster: &ClusterData| {
+            if cluster.glyph_len == u8::MAX {
+                0
+            } else {
+                usize::from(cluster.glyph_len)
+            }
+        };
+        let glyph_start =
+            run.glyphs_range.start + clusters[..first].iter().map(array_glyph_len).sum::<usize>();
+        let glyph_len = clusters[first..last]
+            .iter()
+            .map(array_glyph_len)
+            .sum::<usize>();
+        Some(ReshapeTarget {
+            run_index,
+            cluster_range: run.clusters_range.start + first..run.clusters_range.start + last,
+            glyph_range: glyph_start..glyph_start + glyph_len,
+            text_offset_base: lo_offset,
+            char_range: run.range.char_range.start + first..run.range.char_range.start + last,
+        })
+    }
+
+    pub(super) fn record_break(&mut self, pos: usize, range: Range<usize>) {
+        if self.active_breaks.iter().any(|entry| entry.pos == pos) {
+            return;
+        }
+        let Some(target) = self.reshape_locate(range.clone()) else {
+            return;
+        };
+        let run = &self.runs[target.run_index];
+        let local_glyph_start = target.glyph_range.start - run.glyphs_range.start;
+        let mut clusters = self.clusters[target.cluster_range.clone()].to_vec();
+        for cluster in &mut clusters {
+            cluster.text_offset -= target.text_offset_base;
+            if cluster.glyph_len != 0 && cluster.glyph_len != u8::MAX {
+                cluster.glyph_offset -= u32::try_from(local_glyph_start)
+                    .expect("a shaped run's glyph offset fits in u32");
+            }
+        }
+        let glyphs = self.glyphs[target.glyph_range].to_vec();
+        self.active_breaks.push(ActiveBreak {
+            pos,
+            range,
+            clusters,
+            glyphs,
+        });
+    }
+
+    pub(super) fn restore_break(&mut self, pos: usize) -> bool {
+        let Some(index) = self.active_breaks.iter().position(|entry| entry.pos == pos) else {
+            return false;
+        };
+        let entry = self.active_breaks.remove(index);
+        let Some(target) = self.reshape_locate(entry.range) else {
+            return false;
+        };
+        self.splice_fragment(&target, &entry.clusters, &entry.glyphs);
+        true
+    }
+
+    pub(super) fn reshape_context(&self, target: &ReshapeTarget) -> Option<ReshapeContext> {
+        let run = self.runs.get(target.run_index)?.clone();
+        let shape_data = self.run_shape_data.get(target.run_index)?;
+        Some(ReshapeContext {
+            font: self.fonts.get(run.font_index)?.clone(),
+            normalized_coords: self
+                .normalized_coords
+                .get(run.normalized_coords_range.clone())?
+                .to_vec(),
+            features: self
+                .features
+                .get(shape_data.features_range.clone())?
+                .to_vec(),
+            script: shape_data.script,
+            language: shape_data.language,
+            char_style_indices: self
+                .clusters
+                .get(target.cluster_range.clone())?
+                .iter()
+                .map(|cluster| cluster.style_index)
+                .collect(),
+            run,
+        })
+    }
+
+    pub(super) fn splice_fragment(
+        &mut self,
+        target: &ReshapeTarget,
+        new_clusters: &[ClusterData],
+        new_glyphs: &[Glyph],
+    ) {
+        let run = &self.runs[target.run_index];
+        let local_glyph_start = target.glyph_range.start - run.glyphs_range.start;
+        let old_cluster_end = run.clusters_range.end;
+        let old_glyph_end = run.glyphs_range.end;
+        let cluster_start = target.cluster_range.start;
+        let glyph_delta = new_glyphs.len() as isize - target.glyph_range.len() as isize;
+        let cluster_delta = new_clusters.len() as isize - target.cluster_range.len() as isize;
+
+        let rebased = new_clusters.iter().map(|cluster| {
+            let mut cluster = *cluster;
+            cluster.text_offset += target.text_offset_base;
+            if cluster.glyph_len != 0 && cluster.glyph_len != u8::MAX {
+                cluster.glyph_offset += u32::try_from(local_glyph_start)
+                    .expect("a shaped run's glyph offset fits in u32");
+            }
+            cluster
+        });
+        self.glyphs
+            .splice(target.glyph_range.clone(), new_glyphs.iter().copied());
+        self.clusters.splice(target.cluster_range.clone(), rebased);
+
+        let tail_start = cluster_start + new_clusters.len();
+        let tail_end = (old_cluster_end as isize + cluster_delta) as usize;
+        if glyph_delta != 0 {
+            for cluster in &mut self.clusters[tail_start..tail_end] {
+                if cluster.glyph_len != 0 && cluster.glyph_len != u8::MAX {
+                    let shifted = i64::from(cluster.glyph_offset)
+                        + i64::try_from(glyph_delta).expect("an isize fits in i64");
+                    cluster.glyph_offset =
+                        u32::try_from(shifted).expect("a shaped run's glyph offset fits in u32");
+                }
+            }
+        }
+
+        let run = &mut self.runs[target.run_index];
+        run.clusters_range.end = tail_end;
+        run.glyphs_range.end = (old_glyph_end as isize + glyph_delta) as usize;
+        run.advance = self.clusters[run.clusters_range.clone()]
+            .iter()
+            .map(|cluster| cluster.advance)
+            .sum();
+        for run in &mut self.runs[target.run_index + 1..] {
+            run.clusters_range.start = (run.clusters_range.start as isize + cluster_delta) as usize;
+            run.clusters_range.end = (run.clusters_range.end as isize + cluster_delta) as usize;
+            run.glyphs_range.start = (run.glyphs_range.start as isize + glyph_delta) as usize;
+            run.glyphs_range.end = (run.glyphs_range.end as isize + glyph_delta) as usize;
+        }
+    }
+
     pub(crate) fn push_run(
         &mut self,
         text: &str,
@@ -203,6 +468,11 @@ impl ShapedText {
                     .map(|c| NormalizedCoord::from_bits(c.to_bits())),
             );
             start..self.normalized_coords.len()
+        };
+        let features_range = {
+            let start = self.features.len();
+            self.features.extend_from_slice(options.features);
+            start..self.features.len()
         };
 
         let font_index = self
@@ -311,7 +581,62 @@ impl ShapedText {
             advance: run_advance,
             font_metrics,
         });
+        self.run_shape_data.push(RunShapeData {
+            script: item.script,
+            language: options.language,
+            features_range,
+        });
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ActiveBreak {
+    pos: usize,
+    range: Range<usize>,
+    clusters: Vec<ClusterData>,
+    glyphs: Vec<Glyph>,
+}
+
+/// The bounded source fragments that must be reshaped when committing a line break.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReshapeRanges {
+    /// The fragment ending at the committed break.
+    pub tail: Range<usize>,
+    /// The fragment beginning at the committed break.
+    pub head: Range<usize>,
+}
+
+impl ReshapeRanges {
+    /// Whether the boundary is already break-safe.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.tail.is_empty() && self.head.is_empty()
+    }
+}
+
+pub(super) struct ReshapeTarget {
+    pub(super) run_index: usize,
+    pub(super) cluster_range: Range<usize>,
+    pub(super) glyph_range: Range<usize>,
+    pub(super) text_offset_base: u16,
+    pub(super) char_range: Range<usize>,
+}
+
+pub(super) struct ReshapeContext {
+    pub(super) run: ShapedRun,
+    pub(super) font: FontInstance,
+    pub(super) normalized_coords: Vec<NormalizedCoord>,
+    pub(super) features: Vec<FontFeature>,
+    pub(super) script: Script,
+    pub(super) language: Option<Language>,
+    pub(super) char_style_indices: Vec<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RunShapeData {
+    script: Script,
+    language: Option<Language>,
+    features_range: Range<usize>,
 }
 
 /// One shaped run, belonging to a [`ShapedText`].
@@ -359,7 +684,7 @@ pub struct ShapedRun {
 ///   Should be in logical order (forward for LTR, reverse for RTL).
 #[expect(clippy::missing_assert_message, reason = "Deferred")]
 #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
-fn process_clusters<I: Iterator<Item = (usize, char)>>(
+pub(super) fn process_clusters<I: Iterator<Item = (usize, char)>>(
     direction: Direction,
     clusters: &mut Vec<ClusterData>,
     glyphs: &mut Vec<Glyph>,
@@ -379,6 +704,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     let mut cluster_id = start_cluster_id;
     let mut char_info = char_info_at(cluster_id as usize);
     let mut cluster_advance = 0.0;
+    let mut cluster_flags = 0;
     // If the current cluster might be a single-glyph, zero-offset cluster, we defer
     // pushing the first glyph to `glyphs` because it might be inlined into `ClusterData`.
     let mut pending_inline_glyph: Option<Glyph> = None;
@@ -455,6 +781,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 total_glyphs,
                 cluster_type,
                 inline_glyph_id,
+                cluster_flags,
             );
             cluster_glyph_offset = total_glyphs;
 
@@ -478,12 +805,14 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                         total_glyphs,
                         ClusterType::LigatureComponent,
                         None,
+                        ClusterData::UNSAFE_TO_BREAK | ClusterData::UNSAFE_TO_CONCAT,
                     );
                 }
             }
             cluster_start_char = char_indices_iter.next().unwrap();
 
             cluster_advance = 0.0;
+            cluster_flags = 0;
             last_cluster_id = cluster_id;
             cluster_id = glyph_info.cluster;
             char_info = char_info_at(cluster_id as usize);
@@ -498,6 +827,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             advance: (glyph_pos.x_advance as f32) * scale_factor,
         };
         cluster_advance += glyph.advance;
+        cluster_flags |= harf_flags(glyph_info);
         // Push any pending glyph. If it was a zero-offset, single glyph cluster, it would
         // have been pushed in the first `if` block.
         if let Some(pending) = pending_inline_glyph.take() {
@@ -538,6 +868,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 total_glyphs,
                 ClusterType::LigatureStart,
                 None,
+                cluster_flags,
             );
 
             cluster_glyph_offset = total_glyphs;
@@ -560,6 +891,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     total_glyphs,
                     ClusterType::LigatureComponent,
                     None,
+                    ClusterData::UNSAFE_TO_BREAK | ClusterData::UNSAFE_TO_CONCAT,
                 );
             }
         } else {
@@ -594,13 +926,14 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 total_glyphs,
                 cluster_type,
                 inline_glyph_id,
+                cluster_flags,
             );
         }
     }
 }
 
 #[derive(PartialEq)]
-enum Direction {
+pub(super) enum Direction {
     Ltr,
     Rtl,
 }
@@ -633,6 +966,7 @@ fn push_cluster(
     total_glyphs: u32,
     cluster_type: ClusterType,
     inline_glyph_id: Option<u32>,
+    extra_flags: u16,
 ) {
     let glyph_len = (total_glyphs - glyph_offset) as u8;
 
@@ -661,7 +995,7 @@ fn push_cluster(
 
     clusters.push(ClusterData {
         info: ClusterInfo::new(char_info.0.boundary, cluster_start_char.1),
-        flags: (&cluster_type).into(),
+        flags: u16::from(&cluster_type) | extra_flags,
         style_index: char_info.1,
         glyph_len: final_glyph_len,
         text_len: cluster_start_char.1.len_utf8() as u8,
@@ -669,6 +1003,20 @@ fn push_cluster(
         text_offset: cluster_start_char.0 as u16,
         advance: final_advance,
     });
+}
+
+fn harf_flags(info: &harfrust::GlyphInfo) -> u16 {
+    let mut flags = 0;
+    if info.unsafe_to_break() {
+        flags |= ClusterData::UNSAFE_TO_BREAK;
+    }
+    if info.unsafe_to_concat() {
+        flags |= ClusterData::UNSAFE_TO_CONCAT;
+    }
+    if info.safe_to_insert_tatweel() {
+        flags |= ClusterData::SAFE_TO_INSERT_TATWEEL;
+    }
+    flags
 }
 
 #[cfg(test)]
