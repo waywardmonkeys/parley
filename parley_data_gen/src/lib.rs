@@ -3,7 +3,7 @@
 
 //! See `./main.rs`.
 
-use icu_properties::props::{GeneralCategory, GraphemeClusterBreak, Script};
+use icu_properties::props::{GeneralCategory, GraphemeClusterBreak, JoiningType, Script};
 use icu_properties::{
     CodePointMapData, CodePointSetData,
     props::{
@@ -38,6 +38,7 @@ pub fn generate(out: std::path::PathBuf, config: &Config) {
                 CodePointMapData::<GeneralCategory>::new().get32(cp),
                 CodePointMapData::<GraphemeClusterBreak>::new().get32(cp),
                 CodePointMapData::<BidiClass>::new().get32(cp),
+                CodePointMapData::<JoiningType>::new().get32(cp),
                 CodePointSetData::new::<Emoji>().contains32(cp)
                     || CodePointSetData::new::<ExtendedPictographic>().contains32(cp),
                 CodePointSetData::new::<VariationSelector>().contains32(cp),

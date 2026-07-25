@@ -8,6 +8,8 @@
 
 use icu_properties::props::{BidiClass, GeneralCategory, GraphemeClusterBreak, Script};
 
+pub use icu_properties::props::JoiningType;
+
 /// Baked data (`PackTab` tables).
 #[cfg(feature = "baked")]
 pub mod generated;
@@ -21,6 +23,7 @@ impl Properties {
     const GC_BITS: u32 = 5;
     const GCB_BITS: u32 = 5;
     const BIDI_BITS: u32 = 5;
+    const JOINING_TYPE_BITS: u32 = 3;
     const IS_EMOJI_OR_PICTOGRAPH_BITS: u32 = 1;
     const IS_VARIATION_SELECTOR_BITS: u32 = 1;
     const IS_REGION_INDICATOR_BITS: u32 = 1;
@@ -30,7 +33,8 @@ impl Properties {
     const GC_SHIFT: u32 = Self::SCRIPT_SHIFT + Self::SCRIPT_BITS;
     const GCB_SHIFT: u32 = Self::GC_SHIFT + Self::GC_BITS;
     const BIDI_SHIFT: u32 = Self::GCB_SHIFT + Self::GCB_BITS;
-    const IS_EMOJI_OR_PICTOGRAPH_SHIFT: u32 = Self::BIDI_SHIFT + Self::BIDI_BITS;
+    const JOINING_TYPE_SHIFT: u32 = Self::BIDI_SHIFT + Self::BIDI_BITS;
+    const IS_EMOJI_OR_PICTOGRAPH_SHIFT: u32 = Self::JOINING_TYPE_SHIFT + Self::JOINING_TYPE_BITS;
     const IS_VARIATION_SELECTOR_SHIFT: u32 =
         Self::IS_EMOJI_OR_PICTOGRAPH_SHIFT + Self::IS_EMOJI_OR_PICTOGRAPH_BITS;
     const IS_REGION_INDICATOR_SHIFT: u32 =
@@ -51,6 +55,7 @@ impl Properties {
         gc: GeneralCategory,
         gcb: GraphemeClusterBreak,
         bidi: BidiClass,
+        joining_type: JoiningType,
         is_emoji_or_pictographic: bool,
         is_variation_selector: bool,
         is_region_indicator: bool,
@@ -60,12 +65,14 @@ impl Properties {
         let gc = gc as u32;
         let gcb = gcb.to_icu4c_value() as u32;
         let bidi = bidi.to_icu4c_value() as u32;
+        let joining_type = joining_type.to_icu4c_value() as u32;
 
         Self(
             (s << Self::SCRIPT_SHIFT)
                 | (gc << Self::GC_SHIFT)
                 | (gcb << Self::GCB_SHIFT)
                 | (bidi << Self::BIDI_SHIFT)
+                | (joining_type << Self::JOINING_TYPE_SHIFT)
                 | ((is_emoji_or_pictographic as u32) << Self::IS_EMOJI_OR_PICTOGRAPH_SHIFT)
                 | ((is_variation_selector as u32) << Self::IS_VARIATION_SELECTOR_SHIFT)
                 | ((is_region_indicator as u32) << Self::IS_REGION_INDICATOR_SHIFT)
@@ -118,6 +125,18 @@ impl Properties {
         BidiClass::from_icu4c_value(self.bits(Self::BIDI_SHIFT, Self::BIDI_BITS) as u8)
     }
 
+    /// Returns the joining behavior for the character.
+    #[inline(always)]
+    pub fn joining_type(&self) -> JoiningType {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "joining type data only occupies JOINING_TYPE_BITS bits"
+        )]
+        JoiningType::from_icu4c_value(
+            self.bits(Self::JOINING_TYPE_SHIFT, Self::JOINING_TYPE_BITS) as u8
+        )
+    }
+
     /// Returns whether the character is an emoji or pictograph.
     #[inline(always)]
     pub fn is_emoji_or_pictograph(&self) -> bool {
@@ -165,8 +184,8 @@ impl From<Properties> for u32 {
 mod tests {
     use super::Properties;
     use icu_properties::props::{
-        BidiClass, Emoji, ExtendedPictographic, GeneralCategory, GraphemeClusterBreak, LineBreak,
-        RegionalIndicator, Script, VariationSelector,
+        BidiClass, Emoji, ExtendedPictographic, GeneralCategory, GraphemeClusterBreak, JoiningType,
+        LineBreak, RegionalIndicator, Script, VariationSelector,
     };
     use icu_properties::{CodePointMapData, CodePointSetData};
 
@@ -176,6 +195,7 @@ mod tests {
             CodePointMapData::<GeneralCategory>::new().get32(cp),
             CodePointMapData::<GraphemeClusterBreak>::new().get32(cp),
             CodePointMapData::<BidiClass>::new().get32(cp),
+            CodePointMapData::<JoiningType>::new().get32(cp),
             CodePointSetData::new::<Emoji>().contains32(cp)
                 || CodePointSetData::new::<ExtendedPictographic>().contains32(cp),
             CodePointSetData::new::<VariationSelector>().contains32(cp),
@@ -205,5 +225,18 @@ mod tests {
                 "mismatch at U+{cp:04X}: actual={actual:?}, expected={expected:?}"
             );
         }
+    }
+
+    #[test]
+    fn joining_type_is_retained_in_composite_properties() {
+        assert_eq!(
+            Properties::get('ب').joining_type(),
+            JoiningType::DualJoining
+        );
+        assert_eq!(
+            Properties::get('\u{64e}').joining_type(),
+            JoiningType::Transparent
+        );
+        assert_eq!(Properties::get('A').joining_type(), JoiningType::NonJoining);
     }
 }

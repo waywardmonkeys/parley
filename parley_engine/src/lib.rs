@@ -35,6 +35,8 @@ pub mod shape;
 pub use linebender_resource_handle::FontData;
 pub use parlance::BaseDirection;
 
+pub use icu_properties::props::JoiningType;
+
 pub use analysis::{Analysis, AnalysisDataSources, Boundary, CharInfo};
 pub use analyzer::{AnalysisOptions, Analyzer};
 pub use glyph::Glyph;
