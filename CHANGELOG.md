@@ -12,14 +12,6 @@ Subheadings to categorize changes are `added, changed, deprecated, removed, fixe
 
 This release has an [MSRV] of 1.88.
 
-### Added
-
-#### Parley Core
-
-- `Shaper::apply_break` and `Shaper::apply_concat` reshape the bounded unsafe region around a
-  committed line boundary, retain the bounded pre-break fragment for exact reversal across
-  default-ignorable separators, and expose unsafe break/concat discovery on `ShapedText`.
-
 ### Changed
 
 #### Parley
@@ -34,10 +26,6 @@ This release has an [MSRV] of 1.88.
 - `parley::editing::Cursor::{previous,next}_logical_word` now land at the previous/next logical start of a word and skip over whitespace. ([#215][] by [@tomcur][])
 
 ### Fixed
-
-#### Parley Core
-
-- `ShapedRun::advance` now includes the final shaped cluster.
 
 #### Fontique
 

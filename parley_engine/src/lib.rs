@@ -40,5 +40,5 @@ pub use icu_properties::props::JoiningType;
 pub use analysis::{Analysis, AnalysisDataSources, Boundary, CharInfo};
 pub use analyzer::{AnalysisOptions, Analyzer};
 pub use glyph::Glyph;
-pub use shape::shaped_text::{FontMetrics, NormalizedCoord, ReshapeRanges, ShapedRun, ShapedText};
+pub use shape::shaped_text::{FontMetrics, NormalizedCoord, ShapedRun, ShapedText};
 pub use shape::shaper::{FontInstance, ShapeOptions, Shaper};

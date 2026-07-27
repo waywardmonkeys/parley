@@ -5,18 +5,15 @@
 
 use alloc::vec::Vec;
 use core::{mem, ops::Range};
-use harfrust::{BufferFlags, ShapeOptions as HarfShapeOptions};
+use harfrust::ShapeOptions as HarfShapeOptions;
 use linebender_resource_handle::FontData;
 use parlance::{FontFeature, FontVariation, Language};
 
 use crate::{
-    Analysis, CharInfo, Glyph, ShapedText,
+    Analysis, CharInfo, ShapedText,
     itemize::{Item, TextRange},
     lru_cache::LruCache,
-    shape::{
-        CharCluster, ClusterData, cache,
-        shaped_text::{Direction, process_clusters},
-    },
+    shape::{CharCluster, cache},
 };
 
 /// Shaping options for one item.
@@ -58,8 +55,6 @@ pub struct Shaper {
     unicode_buffer: Option<harfrust::UnicodeBuffer>,
     features: Vec<harfrust::Feature>,
     char_cluster: CharCluster,
-    reshape_clusters: Vec<ClusterData>,
-    reshape_glyphs: Vec<Glyph>,
 }
 
 impl Default for Shaper {
@@ -72,8 +67,6 @@ impl Default for Shaper {
             unicode_buffer: Some(harfrust::UnicodeBuffer::new()),
             features: Vec::new(),
             char_cluster: CharCluster::default(),
-            reshape_clusters: Vec::new(),
-            reshape_glyphs: Vec::new(),
         }
     }
 }
@@ -135,178 +128,6 @@ impl Shaper {
             shaped_text,
         );
         start..shaped_text.runs().len()
-    }
-
-    /// Commits a line break at byte offset `pos`, reshaping only the bounded unsafe region on
-    /// each side of the break.
-    ///
-    /// This is a no-op when `pos` is already break-safe or is not a cluster boundary. Undo a
-    /// committed break with [`Self::apply_concat`].
-    pub fn apply_break(
-        &mut self,
-        text: &str,
-        analysis: &Analysis,
-        shaped_text: &mut ShapedText,
-        pos: usize,
-    ) {
-        let ranges = shaped_text.unsafe_break_region(pos);
-        shaped_text.record_break(pos, ranges.tail.start..ranges.head.end);
-        if !ranges.tail.is_empty() {
-            self.reshape_fragment(text, analysis, shaped_text, ranges.tail);
-        }
-        if !ranges.head.is_empty() {
-            self.reshape_fragment(text, analysis, shaped_text, ranges.head);
-        }
-    }
-
-    /// Joins fragments at byte offset `pos`, reshaping only the bounded concat-unsafe region.
-    ///
-    /// This reverses [`Self::apply_break`] by restoring its bounded pre-break fragment. For other
-    /// concat-unsafe boundaries it performs bounded reshaping. It is a no-op when `pos` is already
-    /// concat-safe or is not a cluster boundary.
-    pub fn apply_concat(
-        &mut self,
-        text: &str,
-        analysis: &Analysis,
-        shaped_text: &mut ShapedText,
-        pos: usize,
-    ) {
-        if shaped_text.restore_break(pos) {
-            return;
-        }
-        let range = shaped_text.unsafe_concat_region(pos);
-        if !range.is_empty() {
-            self.reshape_fragment(text, analysis, shaped_text, range);
-        }
-    }
-
-    fn reshape_fragment(
-        &mut self,
-        text: &str,
-        analysis: &Analysis,
-        shaped_text: &mut ShapedText,
-        text_range: Range<usize>,
-    ) {
-        let Some(target) = shaped_text.reshape_locate(text_range.clone()) else {
-            return;
-        };
-        let Some(context) = shaped_text.reshape_context(&target) else {
-            return;
-        };
-        let run = context.run;
-        let font = context.font;
-        let char_info = &analysis.char_info()[target.char_range.clone()];
-        let fragment_text = &text[text_range];
-
-        let font_ref =
-            harfrust::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
-        let instance = harfrust::ShaperInstance::from_coords(
-            &font_ref,
-            context
-                .normalized_coords
-                .iter()
-                .map(|coord| harfrust::NormalizedCoord::from_bits(coord.to_bits())),
-        );
-        let direction = if run.bidi_level & 1 == 0 {
-            harfrust::Direction::LeftToRight
-        } else {
-            harfrust::Direction::RightToLeft
-        };
-        let script = script_to_harfrust(context.script);
-        let language = context
-            .language
-            .as_ref()
-            .and_then(|lang| lang.language().parse::<harfrust::Language>().ok());
-        self.features.clear();
-        self.features.extend(context.features.iter().map(|feature| {
-            harfrust::Feature::new(
-                harfrust::Tag::new(&feature.tag.to_bytes()),
-                u32::from(feature.value),
-                ..,
-            )
-        }));
-
-        let shaper_data = self.shape_data_cache.entry(
-            cache::ShapeDataKey::new(font.font.data.id(), font.font.index),
-            || harfrust::ShaperData::new(&font_ref),
-        );
-        let harf_shaper = shaper_data
-            .shaper(&font_ref)
-            .instance(Some(&instance))
-            .build();
-        let plan = harfrust::ShapePlan::new(
-            &harf_shaper,
-            direction,
-            Some(script),
-            language.as_ref(),
-            &self.features,
-        );
-        let units_per_em = harf_shaper.units_per_em();
-
-        let mut buffer = mem::take(&mut self.unicode_buffer).unwrap();
-        buffer.clear();
-        buffer.reserve(fragment_text.len());
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "Text length is already u16-limited"
-        )]
-        for (index, ch) in fragment_text.chars().enumerate() {
-            buffer.add(ch, index as u32);
-        }
-        buffer.set_direction(direction);
-        buffer.set_script(script);
-        if let Some(language) = language {
-            buffer.set_language(language);
-        }
-        buffer.set_flags(
-            BufferFlags::PRODUCE_UNSAFE_TO_CONCAT | BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL,
-        );
-        let glyph_buffer = harf_shaper.shape(
-            buffer,
-            HarfShapeOptions::new()
-                .plan(Some(&plan))
-                .features(&self.features)
-                .point_size(Some(run.font_size)),
-        );
-
-        let mut clusters = mem::take(&mut self.reshape_clusters);
-        let mut glyphs = mem::take(&mut self.reshape_glyphs);
-        clusters.clear();
-        glyphs.clear();
-        let scale_factor = run.font_size / units_per_em as f32;
-        if direction == harfrust::Direction::LeftToRight {
-            process_clusters(
-                Direction::Ltr,
-                &mut clusters,
-                &mut glyphs,
-                scale_factor,
-                glyph_buffer.glyph_infos(),
-                glyph_buffer.glyph_positions(),
-                char_info,
-                &context.char_style_indices,
-                fragment_text.char_indices(),
-            );
-        } else {
-            process_clusters(
-                Direction::Rtl,
-                &mut clusters,
-                &mut glyphs,
-                scale_factor,
-                glyph_buffer.glyph_infos(),
-                glyph_buffer.glyph_positions(),
-                char_info,
-                &context.char_style_indices,
-                fragment_text.char_indices().rev(),
-            );
-            clusters.reverse();
-        }
-        shaped_text.splice_fragment(&target, &clusters, &glyphs);
-
-        self.unicode_buffer = Some(glyph_buffer.clear());
-        clusters.clear();
-        glyphs.clear();
-        self.reshape_clusters = clusters;
-        self.reshape_glyphs = glyphs;
     }
 }
 
@@ -486,9 +307,6 @@ fn shape_item(
         if let Some(lang) = language {
             buffer.set_language(lang);
         }
-        buffer.set_flags(
-            BufferFlags::PRODUCE_UNSAFE_TO_CONCAT | BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL,
-        );
 
         let glyph_buffer = harf_shaper.shape(
             buffer,
@@ -542,178 +360,4 @@ fn variations_iter<'a>(
 pub(crate) fn script_to_harfrust(script: fontique::Script) -> harfrust::Script {
     harfrust::Script::from_iso15924_tag(harfrust::Tag::new(&script.to_bytes()))
         .unwrap_or(harfrust::script::UNKNOWN)
-}
-
-#[cfg(test)]
-mod tests {
-    use alloc::{sync::Arc, vec, vec::Vec};
-
-    use fontique::Synthesis;
-    use linebender_resource_handle::{Blob, FontData};
-
-    use crate::{Analysis, AnalysisOptions, Analyzer, ShapedText};
-
-    use super::{FontInstance, ShapeOptions, Shaper};
-
-    const ROBOTO: &[u8] =
-        include_bytes!("../../../parley_dev/assets/fonts/roboto_fonts/Roboto-Regular.ttf");
-    const NOTO_ARABIC: &[u8] =
-        include_bytes!("../../../parley_dev/assets/fonts/noto_fonts/NotoKufiArabic-Regular.otf");
-
-    fn shape(text: &str, font_data: &'static [u8]) -> (Analysis, Shaper, ShapedText) {
-        let mut analysis = Analysis::new();
-        Analyzer::new().analyze(
-            text,
-            &AnalysisOptions {
-                word_break: &[],
-                line_break_override: None,
-            },
-            &mut analysis,
-        );
-        let font = FontInstance {
-            font: FontData::new(Blob::new(Arc::new(font_data)), 0),
-            synthesis: Synthesis::default(),
-        };
-        let char_style_indices = vec![0; text.chars().count()];
-        let mut shaper = Shaper::default();
-        let mut shaped = ShapedText::new();
-        for item in analysis.itemize(text, |_| false) {
-            shaper.shape_item(
-                text,
-                &analysis,
-                &item,
-                &ShapeOptions {
-                    font_size: 32.0,
-                    language: None,
-                    features: &[],
-                    variations: &[],
-                    char_style_indices: &char_style_indices,
-                },
-                |_| Some(font.clone()),
-                &mut shaped,
-            );
-        }
-        (analysis, shaper, shaped)
-    }
-
-    fn unsafe_breaks(text: &str, shaped: &ShapedText) -> Vec<usize> {
-        text.char_indices()
-            .skip(1)
-            .map(|(pos, _)| pos)
-            .filter(|&pos| !shaped.unsafe_break_region(pos).is_empty())
-            .collect()
-    }
-
-    fn check_invariants(text: &str, shaped: &ShapedText) {
-        let mut next_byte = 0;
-        let mut next_char = 0;
-        let mut next_cluster = 0;
-        let mut next_glyph = 0;
-        for run in shaped.runs() {
-            assert_eq!(run.range.byte_range.start, next_byte);
-            assert_eq!(run.range.char_range.start, next_char);
-            assert_eq!(run.clusters_range.start, next_cluster);
-            assert_eq!(run.glyphs_range.start, next_glyph);
-
-            let clusters = &shaped.clusters()[run.clusters_range.clone()];
-            assert_eq!(clusters.len(), run.range.char_range.len());
-            let mut source = run.range.byte_range.start;
-            let mut advance = 0.0_f32;
-            for cluster in clusters {
-                assert_eq!(
-                    run.range.byte_range.start + usize::from(cluster.text_offset),
-                    source
-                );
-                source += usize::from(cluster.text_len);
-                assert!(text.is_char_boundary(source));
-                advance += cluster.advance;
-            }
-            assert_eq!(source, run.range.byte_range.end);
-            assert!((advance - run.advance).abs() < 0.01);
-
-            next_byte = run.range.byte_range.end;
-            next_char = run.range.char_range.end;
-            next_cluster = run.clusters_range.end;
-            next_glyph = run.glyphs_range.end;
-        }
-        assert_eq!(next_byte, text.len());
-        assert_eq!(next_char, text.chars().count());
-        assert_eq!(next_cluster, shaped.clusters().len());
-        assert_eq!(next_glyph, shaped.glyphs().len());
-    }
-
-    #[test]
-    fn arabic_break_reshapes_and_concat_restores() {
-        let text = "سلام";
-        let (analysis, mut shaper, base) = shape(text, NOTO_ARABIC);
-        let pos = *unsafe_breaks(text, &base)
-            .first()
-            .expect("Arabic cursive joining has an unsafe interior break");
-        check_invariants(text, &base);
-
-        let mut broken = base.clone();
-        shaper.apply_break(text, &analysis, &mut broken, pos);
-        assert_ne!(broken, base, "committing the break changes shaped output");
-        check_invariants(text, &broken);
-
-        shaper.apply_concat(text, &analysis, &mut broken, pos);
-        assert_eq!(broken, base, "concatenating restores the original shaping");
-        check_invariants(text, &broken);
-    }
-
-    #[test]
-    fn arabic_break_across_zero_width_space_concat_restores() {
-        let text = "س سل\u{200b}ام";
-        let (analysis, mut shaper, base) = shape(text, NOTO_ARABIC);
-        let pos = text.find("ام").unwrap();
-        assert!(
-            !base.unsafe_break_region(pos).is_empty(),
-            "joining across a legal zero-width break is unsafe"
-        );
-
-        let mut broken = base.clone();
-        shaper.apply_break(text, &analysis, &mut broken, pos);
-        assert_ne!(broken, base, "committing the break changes shaped output");
-        check_invariants(text, &broken);
-
-        shaper.apply_concat(text, &analysis, &mut broken, pos);
-        assert_eq!(
-            broken, base,
-            "concatenating must restore joining across the default-ignorable separator"
-        );
-        check_invariants(text, &broken);
-    }
-
-    #[test]
-    fn latin_ligature_break_reshapes_and_concat_restores() {
-        let text = "office";
-        let (analysis, mut shaper, base) = shape(text, ROBOTO);
-        let pos = text.find("fi").unwrap() + 1;
-        assert!(
-            !base.unsafe_break_region(pos).is_empty(),
-            "the boundary inside the fi ligature is unsafe"
-        );
-
-        let mut broken = base.clone();
-        shaper.apply_break(text, &analysis, &mut broken, pos);
-        assert_ne!(broken, base, "committing the break decomposes the ligature");
-        check_invariants(text, &broken);
-
-        shaper.apply_concat(text, &analysis, &mut broken, pos);
-        assert_eq!(broken, base, "concatenating restores the fi ligature");
-        check_invariants(text, &broken);
-    }
-
-    #[test]
-    fn safe_break_and_concat_are_noops() {
-        let text = "hello world";
-        let (analysis, mut shaper, base) = shape(text, ROBOTO);
-        let pos = text.find("world").unwrap();
-        assert!(base.unsafe_break_region(pos).is_empty());
-
-        let mut shaped = base.clone();
-        shaper.apply_break(text, &analysis, &mut shaped, pos);
-        shaper.apply_concat(text, &analysis, &mut shaped, pos);
-        assert_eq!(shaped, base);
-    }
 }
